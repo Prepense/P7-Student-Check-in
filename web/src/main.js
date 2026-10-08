@@ -128,7 +128,7 @@ function studentView() {
   ${state.mode === 'demo' ? `<label>นักศึกษา<select id="demo-student">${unique.map((row) => `<option value="${e(row.student_id)}" ${row.student_id === state.studentId ? 'selected' : ''}>${e(row.student_id)} · ${e(row.student_name)}</option>`).join('')}</select></label>` : `<p class="muted">รหัสนักศึกษา ${e(state.user?.student_id || 'ยังไม่ได้ผูกบัญชี')}</p>`}
   ${state.mode === 'live' && state.user?.student_name ? `<p>${e(state.user.student_name)}</p>` : ''}
   ${state.result ? `<div class="checkin-result" role="status">${icon('CheckCircle')}<h3>${state.result.result === 'ALREADY_CHECKED_IN' ? 'เช็คชื่อไว้แล้ว' : 'เช็คชื่อสำเร็จ'}</h3><strong>${e(state.result.course_code || '')} · กลุ่ม ${e(state.result.section_code || '')}</strong><p>${date(state.result.checkin_time)} · ${time(state.result.checkin_time)}</p>${state.result.attendance_status === 'LATE' ? '<span class="badge late">สาย</span>' : badge(state.result.attendance_status)}</div>` : ''}
-  <form id="checkin-form"><label>ลิงก์หรือโทเคน QR<textarea name="token" rows="3" required placeholder="https://.../?t=...">${e(state.token)}</textarea></label><button class="primary full" type="submit">${icon('ClipboardCheck')}ยืนยันเช็คชื่อ</button></form>
+  <form id="checkin-form"><label>ลิงก์หรือโทเคน QR<textarea name="token" rows="3" required autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="https://.../?t=...">${e(state.token)}</textarea></label><button class="primary full" type="submit">${icon('ClipboardCheck')}ยืนยันเช็คชื่อ</button></form>
   <div class="student-footer">${state.mode === 'demo' ? 'ข้อมูลตัวอย่าง · ไม่บันทึกการเข้าเรียนจริง' : 'บันทึกผ่าน Cloudflare Worker'}</div></section>`;
 }
 
