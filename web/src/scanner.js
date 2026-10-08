@@ -28,7 +28,6 @@ export function mountQrScanner(modal, onScan, allowDemo) {
   const status = modal.querySelector('#scanner-status');
   const cameras = modal.querySelector('#scanner-camera');
   const retry = modal.querySelector('#scanner-retry');
-  const fileInput = modal.querySelector('#scanner-file');
   const session = { video, reader: null, starting: false, accepted: false };
   const current = () => active === session && modal.open;
   const accept = (value) => {
@@ -78,15 +77,6 @@ export function mountQrScanner(modal, onScan, allowDemo) {
     try { await session.reader.setCamera(cameras.value); }
     catch (failure) { if (current()) error.textContent = cameraError(failure); }
     finally { if (current()) cameras.disabled = cameras.options.length < 2; else session.reader.destroy(); }
-  });
-  fileInput.addEventListener('change', async () => {
-    const file = fileInput.files[0];
-    if (!file || !current()) return;
-    if (file.size > 10 * 1024 * 1024) { error.textContent = 'รูปภาพต้องไม่เกิน 10 MB'; fileInput.value = ''; return; }
-    error.textContent = ''; status.textContent = 'กำลังอ่านรูปภาพ…';
-    try { accept((await QrScanner.scanImage(file, { returnDetailedScanResult: true })).data); }
-    catch { if (current()) error.textContent = 'ไม่พบ QR ในรูปภาพ'; }
-    finally { if (current()) { fileInput.value = ''; status.textContent = session.video.srcObject ? 'กำลังสแกน' : 'กล้องปิดอยู่'; } }
   });
   void start();
 }

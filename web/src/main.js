@@ -1,13 +1,13 @@
 import './style.css';
 import QRCode from 'qrcode';
-import { createIcons, GraduationCap, Settings, Plus, Play, Square, RefreshCw, Upload, Download, Search, QrCode, ExternalLink, Copy, X, CheckCircle, LogOut, CalendarDays, Users, ClipboardCheck, ArrowLeft, Camera, Image } from 'lucide';
+import { createIcons, GraduationCap, Settings, Plus, Play, Square, RefreshCw, Upload, Download, Search, QrCode, ExternalLink, Copy, X, CheckCircle, LogOut, CalendarDays, Users, ClipboardCheck, ArrowLeft, Camera } from 'lucide';
 import { readSheet } from 'read-excel-file/browser';
 import { DOMAIN, validateStudents, sessionTimes, attendanceRows, csvText, qrTokenFromText, escapeHtml as e } from './domain.js';
 import { api, loadConfig, connectFirebase, login, signup, verifyEmail, refreshAccount, logout, resetPassword } from './backend.js';
 import { DEMO_KEY, seedDemo } from './demo.js';
 import { mountQrScanner, closeQrScanner } from './scanner.js';
 
-const icons = { GraduationCap, Settings, Plus, Play, Square, RefreshCw, Upload, Download, Search, QrCode, ExternalLink, Copy, X, CheckCircle, LogOut, CalendarDays, Users, ClipboardCheck, ArrowLeft, Camera, Image };
+const icons = { GraduationCap, Settings, Plus, Play, Square, RefreshCw, Upload, Download, Search, QrCode, ExternalLink, Copy, X, CheckCircle, LogOut, CalendarDays, Users, ClipboardCheck, ArrowLeft, Camera };
 const app = document.querySelector('#app');
 const modal = document.querySelector('#modal');
 const initialUrl = new URL(location.href);
@@ -130,7 +130,7 @@ function studentView() {
   ${state.mode === 'live' && state.user?.student_name ? `<p>${e(state.user.student_name)}</p>` : ''}
   ${state.result ? `<div class="checkin-result" role="status">${icon('CheckCircle')}<h3>${state.result.result === 'ALREADY_CHECKED_IN' ? 'เช็คชื่อไว้แล้ว' : 'เช็คชื่อสำเร็จ'}</h3><strong>${e(state.result.course_code || '')} · กลุ่ม ${e(state.result.section_code || '')}</strong><p>${date(state.result.checkin_time)} · ${time(state.result.checkin_time)}</p>${state.result.attendance_status === 'LATE' ? '<span class="badge late">สาย</span>' : badge(state.result.attendance_status)}</div>` : ''}
   ${actionButton('scan-qr', 'Camera', 'สแกน QR', 'scan-button full')}
-  <form id="checkin-form"><label>ลิงก์หรือโทเคน QR<textarea name="token" rows="3" required autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="https://.../?t=...">${e(state.token)}</textarea></label><button class="primary full" type="submit">${icon('ClipboardCheck')}ยืนยันเช็คชื่อ</button></form>
+  ${state.token ? `<form id="checkin-form"><button class="primary full" type="submit">${icon('ClipboardCheck')}ยืนยันเช็คชื่อ</button></form>` : ''}
   <div class="student-footer">${state.mode === 'demo' ? 'ข้อมูลตัวอย่าง · ไม่บันทึกการเข้าเรียนจริง' : 'บันทึกผ่าน Cloudflare Worker'}</div></section>`;
 }
 
@@ -207,8 +207,7 @@ function scannerModal() {
   showModal('สแกน QR', `<div class="scanner-preview"><video id="scanner-video" muted playsinline aria-label="ภาพจากกล้อง"></video></div>
     <p id="scanner-status" class="muted scanner-status" role="status">กำลังเปิดกล้อง…</p><div id="scanner-error" class="form-error" role="alert"></div>
     <div class="scanner-controls"><label><span class="sr-only">กล้อง</span><select id="scanner-camera" disabled><option>กล้อง</option></select></label>
-    <button id="scanner-retry" class="icon-button" title="เปิดกล้องอีกครั้ง" aria-label="เปิดกล้องอีกครั้ง">${icon('RefreshCw')}</button></div>
-    <label class="scanner-image">${icon('Image')}เลือกรูป QR<input id="scanner-file" class="sr-only" type="file" accept="image/*" aria-label="เลือกรูป QR"></label>`);
+    <button id="scanner-retry" class="icon-button" title="เปิดกล้องอีกครั้ง" aria-label="เปิดกล้องอีกครั้ง">${icon('RefreshCw')}</button></div>`);
   modal.classList.add('scanner-dialog');
   mountQrScanner(modal, (token) => {
     state.token = token; state.result = null;
@@ -333,7 +332,7 @@ async function submit(form) {
     }
     case 'checkin-form': {
       if (state.mode === 'live' && (state.user?.role !== 'student' || !state.user?.student_id)) throw new Error('บัญชียังไม่ได้รับสิทธิ์นักศึกษาและรหัสนักศึกษา');
-      const token = qrTokenFromText(data.token, state.mode === 'demo');
+      const token = qrTokenFromText(state.token, state.mode === 'demo');
       state.token = token;
       state.result = null;
       try { state.result = await api(state.mode, '/api/check-in', { token, student_id: state.studentId }); }
