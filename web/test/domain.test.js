@@ -1,9 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { validateStudents, sessionTimes, attendanceRows, csvText, escapeHtml } from '../src/domain.js';
+import { validateStudents, sessionTimes, attendanceRows, csvText, qrTokenFromText, escapeHtml } from '../src/domain.js';
 import { demoApi, demoCheckIn, seedDemo } from '../src/demo.js';
 
 const student = { student_id: 'DEMO-001', student_name: 'Student Example', student_email: 'student.example@rmuti.ac.th' };
+test('QR parsing preserves every case-sensitive token byte through links and paste', () => {
+  const token = `eYj_-ABCdef.${'a_B-cDe'.repeat(6)}X`;
+  const url = new URL('https://prepense.github.io/P7-Student-Check-in/'); url.searchParams.set('t', token);
+  assert.equal(qrTokenFromText(url.href), token);
+  assert.equal(qrTokenFromText(` ${token}\n`), token);
+  for (const value of ['https://example.com/', 'javascript:alert(1)', `${url.href}&t=another`, token.replace('.', '\n.'), token.replace('-', '\u2013'), 'short.signature']) {
+    assert.throws(() => qrTokenFromText(value));
+  }
+});
+test('live QR parsing never accepts offline display or demo tokens', () => {
+  for (const value of ['https://example.com/?display_test=1', 'demo-test', 'https://example.com/?demo=1&t=demo-test']) assert.throws(() => qrTokenFromText(value));
+  assert.equal(qrTokenFromText('https://example.com/?demo=1&t=demo-test', true), 'demo-test');
+});
 test('university email is preserved, hyphenated student IDs are not altered', () => {
   const [row] = validateStudents([student]);
   assert.equal(row.student_id, student.student_id); assert.deepEqual(row.errors, []);

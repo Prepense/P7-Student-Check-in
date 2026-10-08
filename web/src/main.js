@@ -1,12 +1,13 @@
 import './style.css';
 import QRCode from 'qrcode';
-import { createIcons, GraduationCap, Settings, Plus, Play, Square, RefreshCw, Upload, Download, Search, QrCode, ExternalLink, Copy, X, CheckCircle, LogOut, CalendarDays, Users, ClipboardCheck, ArrowLeft } from 'lucide';
+import { createIcons, GraduationCap, Settings, Plus, Play, Square, RefreshCw, Upload, Download, Search, QrCode, ExternalLink, Copy, X, CheckCircle, LogOut, CalendarDays, Users, ClipboardCheck, ArrowLeft, Camera, Image } from 'lucide';
 import { readSheet } from 'read-excel-file/browser';
-import { DOMAIN, validateStudents, sessionTimes, attendanceRows, csvText, escapeHtml as e } from './domain.js';
+import { DOMAIN, validateStudents, sessionTimes, attendanceRows, csvText, qrTokenFromText, escapeHtml as e } from './domain.js';
 import { api, loadConfig, connectFirebase, login, signup, verifyEmail, refreshAccount, logout, resetPassword } from './backend.js';
 import { DEMO_KEY, seedDemo } from './demo.js';
+import { mountQrScanner, closeQrScanner } from './scanner.js';
 
-const icons = { GraduationCap, Settings, Plus, Play, Square, RefreshCw, Upload, Download, Search, QrCode, ExternalLink, Copy, X, CheckCircle, LogOut, CalendarDays, Users, ClipboardCheck, ArrowLeft };
+const icons = { GraduationCap, Settings, Plus, Play, Square, RefreshCw, Upload, Download, Search, QrCode, ExternalLink, Copy, X, CheckCircle, LogOut, CalendarDays, Users, ClipboardCheck, ArrowLeft, Camera, Image };
 const app = document.querySelector('#app');
 const modal = document.querySelector('#modal');
 const initialUrl = new URL(location.href);
@@ -128,6 +129,7 @@ function studentView() {
   ${state.mode === 'demo' ? `<label>นักศึกษา<select id="demo-student">${unique.map((row) => `<option value="${e(row.student_id)}" ${row.student_id === state.studentId ? 'selected' : ''}>${e(row.student_id)} · ${e(row.student_name)}</option>`).join('')}</select></label>` : `<p class="muted">รหัสนักศึกษา ${e(state.user?.student_id || 'ยังไม่ได้ผูกบัญชี')}</p>`}
   ${state.mode === 'live' && state.user?.student_name ? `<p>${e(state.user.student_name)}</p>` : ''}
   ${state.result ? `<div class="checkin-result" role="status">${icon('CheckCircle')}<h3>${state.result.result === 'ALREADY_CHECKED_IN' ? 'เช็คชื่อไว้แล้ว' : 'เช็คชื่อสำเร็จ'}</h3><strong>${e(state.result.course_code || '')} · กลุ่ม ${e(state.result.section_code || '')}</strong><p>${date(state.result.checkin_time)} · ${time(state.result.checkin_time)}</p>${state.result.attendance_status === 'LATE' ? '<span class="badge late">สาย</span>' : badge(state.result.attendance_status)}</div>` : ''}
+  ${actionButton('scan-qr', 'Camera', 'สแกน QR', 'scan-button full')}
   <form id="checkin-form"><label>ลิงก์หรือโทเคน QR<textarea name="token" rows="3" required autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="https://.../?t=...">${e(state.token)}</textarea></label><button class="primary full" type="submit">${icon('ClipboardCheck')}ยืนยันเช็คชื่อ</button></form>
   <div class="student-footer">${state.mode === 'demo' ? 'ข้อมูลตัวอย่าง · ไม่บันทึกการเข้าเรียนจริง' : 'บันทึกผ่าน Cloudflare Worker'}</div></section>`;
 }
@@ -193,12 +195,29 @@ function updateCountdown() {
 }
 
 function showModal(title, content, wide = false) {
+  closeQrScanner();
   modal.className = wide ? 'wide' : '';
   modal.innerHTML = `<div class="modal-heading"><h2>${title}</h2>${iconButton('dismiss', 'X', 'ปิด')}</div>${content}`;
   createIcons({ icons }); modal.showModal();
 }
 const field = (label, name, value = '', type = 'text', attrs = '') => `<label>${label}<input name="${name}" type="${type}" value="${e(value)}" ${attrs} required></label>`;
 const formFooter = (label) => `<div class="form-error" role="alert"></div><footer><button type="button" data-action="dismiss">ยกเลิก</button><button type="submit" class="primary">${label}</button></footer>`;
+
+function scannerModal() {
+  showModal('สแกน QR', `<div class="scanner-preview"><video id="scanner-video" muted playsinline aria-label="ภาพจากกล้อง"></video></div>
+    <p id="scanner-status" class="muted scanner-status" role="status">กำลังเปิดกล้อง…</p><div id="scanner-error" class="form-error" role="alert"></div>
+    <div class="scanner-controls"><label><span class="sr-only">กล้อง</span><select id="scanner-camera" disabled><option>กล้อง</option></select></label>
+    <button id="scanner-retry" class="icon-button" title="เปิดกล้องอีกครั้ง" aria-label="เปิดกล้องอีกครั้ง">${icon('RefreshCw')}</button></div>
+    <label class="scanner-image">${icon('Image')}เลือกรูป QR<input id="scanner-file" class="sr-only" type="file" accept="image/*" aria-label="เลือกรูป QR"></label>`);
+  modal.classList.add('scanner-dialog');
+  mountQrScanner(modal, (token) => {
+    state.token = token; state.result = null;
+    const url = new URL(location.href); url.searchParams.set('t', token);
+    if (state.mode === 'live') url.searchParams.delete('demo');
+    history.replaceState(null, '', url.href);
+    render(); app.querySelector('#checkin-form button').focus(); toast('อ่าน QR แล้ว');
+  }, state.mode === 'demo');
+}
 
 function settingsModal() {
   const config = state.config;
@@ -250,10 +269,11 @@ async function handleAction(action, button) {
       await verifyEmail(); state.verificationSentAt = Date.now(); toast('ส่งอีเมลยืนยันแล้ว'); return;
     }
     case 'settings': settingsModal(); return;
-    case 'dismiss': modal.close(); return;
+    case 'dismiss': closeQrScanner(); modal.close(); return;
+    case 'scan-qr': scannerModal(); return;
     case 'teacher': state.view = 'teacher'; state.result = null; render(); if (canTeach()) await reload(); return;
     case 'student': state.view = 'student'; clearQr(); render(); return;
-    case 'logout': state.authMode = 'login'; state.verificationSentAt = 0; await logout(); return;
+    case 'logout': if (closeQrScanner()) modal.close(); state.authMode = 'login'; state.verificationSentAt = 0; await logout(); return;
     case 'new-course': creationModal('course'); return;
     case 'new-section': creationModal('section'); return;
     case 'new-session': creationModal('session'); return;
@@ -313,12 +333,7 @@ async function submit(form) {
     }
     case 'checkin-form': {
       if (state.mode === 'live' && (state.user?.role !== 'student' || !state.user?.student_id)) throw new Error('บัญชียังไม่ได้รับสิทธิ์นักศึกษาและรหัสนักศึกษา');
-      let token = data.token.trim();
-      if (/^https?:\/\//i.test(token)) {
-        const link = new URL(token);
-        if ((link.searchParams.has('demo') || link.searchParams.get('t')?.startsWith('demo-')) && state.mode !== 'demo') throw new Error('QR ตัวอย่างใช้กับระบบจริงไม่ได้');
-        token = link.searchParams.get('t') || '';
-      }
+      const token = qrTokenFromText(data.token, state.mode === 'demo');
       state.token = token;
       state.result = null;
       try { state.result = await api(state.mode, '/api/check-in', { token, student_id: state.studentId }); }
@@ -387,6 +402,7 @@ async function setupLive() {
   await connectFirebase(state.config, async (user) => {
     if (state.mode !== 'live') return;
     state.user = user; clearQr();
+    if (closeQrScanner()) modal.close();
     if (user && !['instructor', 'admin'].includes(user.role)) state.view = 'student';
     if (!user) { state.result = null; state.error = ''; state.generation++; }
     render();
@@ -413,5 +429,9 @@ window.addEventListener('storage', (event) => {
     if (store) { state.attendance = store.attendance.filter((row) => row.session_id === state.sessionId); render(); }
   }
 });
+modal.addEventListener('close', () => { if (!modal.open) closeQrScanner(); });
+modal.addEventListener('cancel', closeQrScanner);
+document.addEventListener('visibilitychange', () => { if (document.hidden && closeQrScanner()) modal.close(); });
+window.addEventListener('pagehide', closeQrScanner);
 render();
 if (state.mode === 'demo' && state.view === 'teacher') reload(); else setupLive().catch((error) => toast(error.message, true));

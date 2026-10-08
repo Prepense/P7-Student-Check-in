@@ -100,6 +100,14 @@ form { display: grid; gap: 17px; }form p { line-height: 1.8; }form footer { disp
 .student-heading { display: flex; align-items: center; gap: 10px; margin-bottom: 22px; }.student-heading svg { color: var(--green); }.student-heading h2 { overflow-wrap: anywhere; }
 .student-surface > label, .student-surface > p { margin-bottom: 24px; }
 .student-footer { color: #8b9a90; font-size: 11px; margin-top: 18px; text-align: center; }
+.scan-button { margin-bottom: 20px; border-color: #16754d; color: #126841; min-height: 46px; }
+.scanner-dialog { width: min(480px, calc(100% - 24px)); max-height: calc(100dvh - 24px); overflow: auto; }
+.scanner-preview { position: relative; aspect-ratio: 1; width: 100%; overflow: hidden; background: #17221b; border-radius: 5px; }
+.scanner-preview video { display: block; width: 100%; height: 100%; object-fit: contain; }
+.scanner-status { margin: 12px 0 6px; min-height: 22px; }
+.scanner-controls { display: grid; grid-template-columns: minmax(0, 1fr) 40px; gap: 8px; margin: 14px 0; }
+.scanner-image { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 12px; border: 1px solid #cfdad3; border-radius: 5px; cursor: pointer; min-height: 44px; }
+.scanner-image:focus-within { outline: 2px solid #357bd3; outline-offset: 3px; }
 .checkin-result { padding: 25px 0; text-align: center; border-top: 1px solid #bdd9c6; border-bottom: 1px solid #bdd9c6; margin-bottom: 25px; color: #16754d; display: grid; gap: 9px; justify-items: center; }
 .checkin-result > svg { width: 35px; height: 35px; }.checkin-result p { font-size: 12px; color: var(--muted); }
 .full { width: 100%; }

@@ -1,5 +1,22 @@
 export const DOMAIN = 'rmuti.ac.th';
 
+export function qrTokenFromText(value, allowDemo = false) {
+  let token = String(value ?? '').trim();
+  if (/^https?:\/\//i.test(token)) {
+    const link = new URL(token);
+    if (link.username || link.password || link.searchParams.getAll('t').length !== 1) throw new Error('ไม่ใช่ QR เช็คชื่อ');
+    if (link.searchParams.has('demo') && !allowDemo) throw new Error('QR ตัวอย่างใช้กับระบบจริงไม่ได้');
+    token = link.searchParams.get('t') || '';
+  }
+  if (token.startsWith('demo-')) {
+    if (!allowDemo) throw new Error('QR ตัวอย่างใช้กับระบบจริงไม่ได้');
+    if (!/^demo-[A-Za-z0-9_-]+$/.test(token)) throw new Error('ไม่ใช่ QR เช็คชื่อ');
+  } else if (!/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{43}$/.test(token) || token.length > 8192) {
+    throw new Error('ลิงก์หรือโทเคน QR ไม่ครบ กรุณาสแกนใหม่');
+  }
+  return token;
+}
+
 export function validateStudents(rows, domain = DOMAIN) {
   const ids = new Set();
   const emails = new Set();
