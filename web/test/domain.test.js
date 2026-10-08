@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { validateStudents, sessionTimes, attendanceRows, csvText, qrTokenFromText, escapeHtml } from '../src/domain.js';
+import { validateStudents, sessionTimes, attendanceRows, attendanceScore, scoreSummary, sessionStatus, dateTimeFromParts, csvText, qrTokenFromText, escapeHtml } from '../src/domain.js';
 import { demoApi, demoCheckIn, seedDemo } from '../src/demo.js';
 
 const student = { student_id: 'DEMO-001', student_name: 'Student Example', student_email: 'student.example@rmuti.ac.th' };
@@ -78,4 +78,57 @@ test('demo late attendance is assigned by session cutoff, not client choice', ()
   const now = Date.now(); const store = seedDemo(now); store.sessions[0].status = 'OPEN';
   const late = now + 11 * 60000; store.tokens.test = { session_id: 'demo-session', expires: late + 20000 };
   assert.equal(demoCheckIn(store, 'test', 'DEMO001', late).attendance_status, 'LATE');
+});
+
+test('24-hour time fields preserve midnight, afternoon and overnight dates', () => {
+  const parts = (day, hour, minute) => ({ start_time_date: day, start_time_hour: hour, start_time_minute: minute });
+  assert.equal(dateTimeFromParts(parts('2026-10-08', '00', '00'), 'start_time'), '2026-10-08T00:00');
+  assert.equal(dateTimeFromParts(parts('2026-10-08', '19', '05'), 'start_time'), '2026-10-08T19:05');
+  for (const data of [parts('2026-02-30', '19', '05'), parts('2026-10-08', '24', '00'), parts('2026-10-08', '19', '60')]) {
+    assert.throws(() => dateTimeFromParts(data, 'start_time'));
+  }
+});
+
+test('latest Excel order wins, omitted students remain last and current names are not overwritten by old attendance', () => {
+  const rows = [
+    { ...student, student_id: 'STU-2', status: 'ACTIVE', roster_order: 0, roster_imported_at: '2026-10-08T01:00:00Z' },
+    { ...student, student_id: 'STU-1', status: 'ACTIVE', roster_order: 1, roster_imported_at: '2026-10-08T01:00:00Z' },
+    { ...student, student_id: 'STU-3', status: 'ACTIVE', roster_order: 0, roster_imported_at: '2026-10-07T01:00:00Z' },
+  ];
+  const merged = attendanceRows([...rows].reverse(), [{ student_id: 'STU-1', student_name: 'Old Name', attendance_status: 'ON_TIME' }]);
+  assert.deepEqual(merged.map((row) => row.student_id), ['STU-2', 'STU-1', 'STU-3']);
+  assert.equal(merged[1].student_name, student.student_name);
+});
+
+test('round and cumulative scores award only on-time attendance, once per round', () => {
+  const enrollments = [{ ...student, status: 'ACTIVE' }, { ...student, student_id: 'NEW', status: 'ACTIVE' }, { ...student, student_id: 'INACTIVE', status: 'INACTIVE' }];
+  const rounds = Array.from({ length: 10 }, (_, i) => ({ id: `round-${i}`, start_time: new Date(i * 60000).toISOString() }));
+  const attendance = rounds.map((round, i) => ({ session_id: round.id, student_id: student.student_id, attendance_status: i < 5 ? 'ON_TIME' : 'LATE' }));
+  attendance.push(attendance[0], { session_id: 'foreign', student_id: student.student_id, attendance_status: 'ON_TIME' });
+  const summary = scoreSummary(enrollments, rounds.reverse(), attendance);
+  assert.equal(summary.rows.length, 2);
+  assert.equal(summary.rows[0].total, 5);
+  assert.equal(summary.rows[1].total, 0);
+  assert.deepEqual(summary.rows[0].points, [1, 1, 1, 1, 1, 0, 0, 0, 0, 0]);
+  for (const status of ['LATE', 'PENDING', 'ABSENT', undefined]) assert.equal(attendanceScore(status), 0);
+});
+
+test('expired open rounds display closed without completing scheduled future rounds', () => {
+  const now = Date.now(), checkin_close_time = new Date(now - 1).toISOString();
+  assert.equal(sessionStatus({ status: 'OPEN', checkin_close_time }, now), 'CLOSED');
+  assert.equal(sessionStatus({ status: 'SCHEDULED', checkin_close_time }, now), 'SCHEDULED');
+});
+
+test('demo archives reversibly, keeps history and refuses new QR or reopening outside the time window', () => {
+  const original = globalThis.localStorage, values = new Map(), now = Date.now();
+  globalThis.localStorage = { getItem: (key) => values.get(key) || null, setItem: (key, value) => values.set(key, value) };
+  try {
+    demoApi('/api/start-session', { session_id: 'demo-session' }, now, 'https://demo.invalid/');
+    demoApi('/api/archive-section', { section_id: 'demo-section' }, now, 'https://demo.invalid/');
+    assert.throws(() => demoApi('/api/issue-qr-token', { session_id: 'demo-session' }, now, 'https://demo.invalid/'));
+    assert.equal(demoApi('/api/section-data?section_id=demo-section', {}, now, 'https://demo.invalid/').sessions.length, 1);
+    demoApi('/api/restore-section', { section_id: 'demo-section' }, now, 'https://demo.invalid/');
+    assert.equal(demoApi('/api/issue-qr-token', { session_id: 'demo-session' }, now, 'https://demo.invalid/').token.startsWith('demo-'), true);
+    assert.throws(() => demoApi('/api/start-session', { session_id: 'demo-session' }, now + 120 * 60000, 'https://demo.invalid/'));
+  } finally { if (original === undefined) delete globalThis.localStorage; else globalThis.localStorage = original; }
 });

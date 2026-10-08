@@ -1,13 +1,13 @@
 import './style.css';
 import QRCode from 'qrcode';
-import { createIcons, GraduationCap, Settings, Plus, Play, Square, RefreshCw, Upload, Download, Search, QrCode, ExternalLink, Copy, X, CheckCircle, LogOut, CalendarDays, Users, ClipboardCheck, ArrowLeft, Camera } from 'lucide';
+import { createIcons, GraduationCap, Settings, Plus, Play, Square, RefreshCw, Upload, Download, Search, QrCode, ExternalLink, Copy, X, CheckCircle, LogOut, CalendarDays, Users, ClipboardCheck, ArrowLeft, Camera, Trash2, RotateCcw } from 'lucide';
 import { readSheet } from 'read-excel-file/browser';
-import { DOMAIN, validateStudents, sessionTimes, attendanceRows, csvText, qrTokenFromText, escapeHtml as e } from './domain.js';
+import { DOMAIN, validateStudents, sessionTimes, attendanceRows, attendanceScore, scoreSummary, sessionStatus, dateTimeFromParts, csvText, qrTokenFromText, escapeHtml as e } from './domain.js';
 import { api, loadConfig, connectFirebase, login, signup, verifyEmail, refreshAccount, logout, resetPassword } from './backend.js';
 import { DEMO_KEY, seedDemo } from './demo.js';
 import { mountQrScanner, closeQrScanner } from './scanner.js';
 
-const icons = { GraduationCap, Settings, Plus, Play, Square, RefreshCw, Upload, Download, Search, QrCode, ExternalLink, Copy, X, CheckCircle, LogOut, CalendarDays, Users, ClipboardCheck, ArrowLeft, Camera };
+const icons = { GraduationCap, Settings, Plus, Play, Square, RefreshCw, Upload, Download, Search, QrCode, ExternalLink, Copy, X, CheckCircle, LogOut, CalendarDays, Users, ClipboardCheck, ArrowLeft, Camera, Trash2, RotateCcw };
 const app = document.querySelector('#app');
 const modal = document.querySelector('#modal');
 const initialUrl = new URL(location.href);
@@ -23,13 +23,16 @@ const state = {
   error: '', token: initialUrl.searchParams.get('t') || '', studentId: 'DEMO001', result: null,
   qr: null, qrBusy: false, nextQr: 0, generation: 0, loaded: false,
   authMode: 'login', verificationSentAt: 0,
+  showArchived: false,
 };
 const icon = (name) => `<i data-lucide="${name}" aria-hidden="true"></i>`;
 const iconButton = (action, name, title, extra = '') => `<button class="icon-button" data-action="${action}" title="${title}" aria-label="${title}" ${extra}>${icon(name)}</button>`;
 const actionButton = (action, name, label, style = '', extra = '') => `<button class="${style}" data-action="${action}" ${extra}>${icon(name)}<span>${label}</span></button>`;
 const options = (rows, selected, label) => rows.map((row) => `<option value="${e(row.id)}" ${row.id === selected ? 'selected' : ''}>${e(label(row))}</option>`).join('');
 const session = () => state.sessions.find((row) => row.id === state.sessionId);
-const time = (value) => value ? new Date(value).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '-';
+const selectedSection = () => state.sections.find((row) => row.id === state.sectionId);
+const writableSection = () => !!state.sectionId && selectedSection()?.active !== false;
+const time = (value) => value ? new Date(value).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }) : '-';
 const date = (value) => value ? new Date(value).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' }) : '-';
 const statusLabels = { SCHEDULED: 'ยังไม่เปิด', OPEN: 'กำลังเช็คชื่อ', LATE: 'กำลังเช็คชื่อ', CLOSED: 'ปิดแล้ว', ON_TIME: 'ตรงเวลา', PENDING: 'ยังไม่เช็คชื่อ' };
 const badge = (status) => `<span class="badge ${e(status.toLowerCase())}">${e(statusLabels[status] || (status === 'LATE' ? 'สาย' : status))}</span>`;
@@ -81,28 +84,33 @@ function studentAccountView() {
 
 function teacherView() {
   const current = session();
+  const status = current && sessionStatus(current);
+  const visibleSections = state.sections.filter((row) => state.showArchived || row.active !== false);
+  const canOpen = writableSection() && current?.active !== false && Date.now() >= Date.parse(current?.checkin_open_time) && Date.now() <= Date.parse(current?.checkin_close_time);
   const rows = attendanceRows(state.enrollments, state.attendance);
   const present = rows.filter((row) => row.attendance_status !== 'PENDING').length;
   const late = rows.filter((row) => row.attendance_status === 'LATE').length;
   return `<section class="selectors" aria-label="รายวิชาและกลุ่มเรียน">
     <label>รายวิชา<select id="course" ${state.loading ? 'disabled' : ''}>${state.courses.length ? options(state.courses, state.courseId, (row) => `${row.course_code} · ${row.course_name}`) : '<option>ยังไม่มีรายวิชา</option>'}</select></label>
     ${iconButton('new-course', 'Plus', 'เพิ่มรายวิชา')}
-    <label>กลุ่มเรียน<select id="section" ${state.loading ? 'disabled' : ''}>${state.sections.length ? options(state.sections, state.sectionId, (row) => `กลุ่ม ${row.section_code}${row.room ? ` · ${row.room}` : ''}`) : '<option>ยังไม่มีกลุ่มเรียน</option>'}</select></label>
-    ${iconButton('new-section', 'Plus', 'เพิ่มกลุ่มเรียน', !state.courseId ? 'disabled' : '')}
+    <label>กลุ่มเรียน<select id="section" ${state.loading ? 'disabled' : ''}>${visibleSections.length ? options(visibleSections, state.sectionId, (row) => `กลุ่ม ${row.section_code}${row.room ? ` · ${row.room}` : ''}${row.active === false ? ' · ลบแล้ว' : ''}`) : '<option>ยังไม่มีกลุ่มเรียน</option>'}</select></label>
+    <div class="section-actions">${iconButton('new-section', 'Plus', 'เพิ่มกลุ่มเรียน', !state.courseId ? 'disabled' : '')}
+    ${iconButton(selectedSection()?.active === false ? 'restore-section' : 'archive-section', selectedSection()?.active === false ? 'RotateCcw' : 'Trash2', selectedSection()?.active === false ? 'คืนห้องเรียน' : 'ลบห้องเรียน', !state.sectionId ? 'disabled' : '')}</div>
   </section>
+  <label class="archive-toggle"><input id="show-archived" type="checkbox" ${state.showArchived ? 'checked' : ''}>แสดงห้องเรียนที่ลบ</label>
   <div class="tabs" role="tablist"><button role="tab" aria-selected="${state.tab === 'attendance'}" data-action="tab-attendance">เช็คชื่อ</button><button role="tab" aria-selected="${state.tab === 'history'}" data-action="tab-history">รอบที่ผ่านมา <span>${state.sessions.length}</span></button></div>
   ${state.loading ? '<div class="loading" role="status">กำลังโหลดข้อมูล...</div>' : ''}
-  ${state.tab === 'history' ? historyView() : `<section class="session-toolbar"><div><h2>${current ? date(current.start_time) : 'รอบเช็คชื่อ'}</h2><div class="session-meta">${current ? `${time(current.start_time)} · เกณฑ์สาย ${time(current.late_cutoff_time)} · ปิดรับ ${time(current.checkin_close_time)}` : 'ยังไม่มีรอบเช็คชื่อ'} ${current ? badge(current.status) : ''}</div></div><div class="actions">
-    ${actionButton('new-session', 'CalendarDays', 'เพิ่มรอบ', '', !state.sectionId ? 'disabled' : '')}
-    ${current ? (['OPEN', 'LATE'].includes(current.status) ? actionButton('close-session', 'Square', 'ปิดรอบ', 'danger') : actionButton('start-session', 'Play', current.status === 'CLOSED' ? 'เปิดอีกครั้ง' : 'เปิดเช็คชื่อ', 'primary')) : ''}
+  ${state.tab === 'history' ? historyView() : `<section class="session-toolbar"><div><h2>${current ? date(current.start_time) : 'รอบเช็คชื่อ'}</h2><div class="session-meta">${current ? `เปิดรับ ${time(current.checkin_open_time)} · เริ่มเรียน ${time(current.start_time)} · เกณฑ์สาย ${time(current.late_cutoff_time)} · ปิดรับ ${time(current.checkin_close_time)}` : 'ยังไม่มีรอบเช็คชื่อ'} ${current ? badge(status) : ''}</div></div><div class="actions">
+    ${actionButton('new-session', 'CalendarDays', 'เพิ่มรอบ', '', !writableSection() ? 'disabled' : '')}
+    ${current ? (['OPEN', 'LATE'].includes(status) ? actionButton('close-session', 'Square', 'ปิดรอบ', 'danger') : actionButton('start-session', 'Play', status === 'CLOSED' ? 'เปิดอีกครั้ง' : 'เปิดเช็คชื่อ', 'primary', canOpen ? '' : 'disabled')) : ''}
   </div></section>
   <div class="attendance-layout"><section class="register"><div class="stats">
     <div><span>รายชื่อทั้งหมด</span><strong>${rows.length}<small> คน</small></strong></div><div><span>เช็คชื่อแล้ว</span><strong class="green">${present}<small> คน</small></strong></div><div><span>มาสาย</span><strong class="amber">${late}<small> คน</small></strong></div><div><span>ยังไม่เช็คชื่อ</span><strong>${rows.length - present}<small> คน</small></strong></div>
-  </div><div class="register-toolbar"><h2>รายชื่อนักศึกษา</h2><div class="actions">${actionButton('import', 'Upload', 'นำเข้า Excel', '', !state.sectionId ? 'disabled' : '')}${iconButton('export', 'Download', 'ดาวน์โหลด CSV', !rows.length ? 'disabled' : '')}${iconButton('refresh', 'RefreshCw', 'รีเฟรชข้อมูล')}</div></div>
+  </div><div class="register-toolbar"><h2>รายชื่อนักศึกษา</h2><div class="actions">${actionButton('import', 'Upload', 'นำเข้า Excel', '', !writableSection() ? 'disabled' : '')}${iconButton('export', 'Download', 'ดาวน์โหลด CSV', !rows.length ? 'disabled' : '')}${iconButton('refresh', 'RefreshCw', 'รีเฟรชข้อมูล')}</div></div>
   <div class="filters"><label class="search">${icon('Search')}<input id="search" placeholder="ค้นหารหัส ชื่อ หรืออีเมล" aria-label="ค้นหานักศึกษา" value="${e(state.search)}"></label><select id="filter" aria-label="กรองสถานะ"><option value="ALL">ทุกสถานะ</option><option value="ON_TIME" ${state.filter === 'ON_TIME' ? 'selected' : ''}>ตรงเวลา</option><option value="LATE" ${state.filter === 'LATE' ? 'selected' : ''}>สาย</option><option value="PENDING" ${state.filter === 'PENDING' ? 'selected' : ''}>ยังไม่เช็คชื่อ</option></select></div>
   <div class="table-scroll"><table><thead><tr><th>นักศึกษา</th><th>สถานะ</th><th>เวลาเช็คชื่อ</th></tr></thead><tbody id="roster-body">${rosterBody()}</tbody></table></div><div class="table-footer"><span id="row-count"></span><span>ปรับปรุงล่าสุด <span id="updated-time">${state.loaded ? time(Date.now()) : '-'}</span></span></div>
-  </section><aside class="qr-panel"><div class="qr-heading"><h2>${icon('QrCode')} QR เช็คชื่อ</h2>${current ? badge(current.status) : ''}</div>
-  <div class="qr-frame"><canvas id="qr-canvas" width="320" height="320" hidden aria-label="QR code สำหรับเช็คชื่อ"></canvas><div id="qr-placeholder">${icon('QrCode')}<span>${current && ['OPEN', 'LATE'].includes(current.status) ? 'กำลังรับ QR...' : 'รอเปิดรอบเช็คชื่อ'}</span></div></div>
+  </section><aside class="qr-panel"><div class="qr-heading"><h2>${icon('QrCode')} QR เช็คชื่อ</h2>${current ? badge(status) : ''}</div>
+  <div class="qr-frame"><canvas id="qr-canvas" width="320" height="320" hidden aria-label="QR code สำหรับเช็คชื่อ"></canvas><div id="qr-placeholder">${icon('QrCode')}<span>${current && writableSection() && ['OPEN', 'LATE'].includes(status) ? 'กำลังรับ QR...' : 'รอเปิดรอบเช็คชื่อ'}</span></div></div>
   <div class="qr-countdown"><span>QR VALID</span><strong id="qr-seconds">--</strong><span>วินาที</span></div><div class="qr-progress"><div id="qr-progress"></div></div>
   <p id="qr-status" class="muted qr-status" role="status">${state.mode === 'demo' ? 'QR ตัวอย่าง · อายุ 20 วินาที' : 'QR จาก Cloudflare Worker'}</p>
   <div class="qr-actions">${iconButton('copy-qr', 'Copy', 'คัดลอกลิงก์ QR')}${iconButton('open-qr', 'ExternalLink', 'เปิดหน้ารับเช็คชื่อ')}${iconButton('refresh-qr', 'RefreshCw', 'รับ QR ใหม่')}</div></aside></div>`}`;
@@ -118,7 +126,8 @@ function rosterBody() {
 
 function historyView() {
   const sessions = [...state.sessions].sort((a, b) => Date.parse(b.start_time) - Date.parse(a.start_time));
-  return `<section class="history"><div class="register-toolbar"><h2>รอบเช็คชื่อ</h2>${actionButton('new-session', 'Plus', 'เพิ่มรอบ', '', !state.sectionId ? 'disabled' : '')}</div><div class="table-scroll"><table><thead><tr><th>วันที่</th><th>เริ่มเรียน</th><th>ปิดรับ</th><th>สถานะ</th><th></th></tr></thead><tbody>${sessions.length ? sessions.map((row) => `<tr><td>${date(row.start_time)}</td><td>${time(row.start_time)}</td><td>${time(row.checkin_close_time)}</td><td>${badge(row.status)}</td><td><button class="text-button" data-action="select-session" data-id="${e(row.id)}">ดูรายชื่อ</button></td></tr>`).join('') : '<tr><td colspan="5" class="empty">ยังไม่มีรอบเช็คชื่อ</td></tr>'}</tbody></table></div></section>`;
+  const closed = sessions.filter((row) => row.active !== false && sessionStatus(row) === 'CLOSED');
+  return `<section class="history"><div class="register-toolbar"><h2>รอบเช็คชื่อ</h2><div class="actions">${actionButton('export-scores', 'Download', `คะแนนรวม (${closed.length} รอบ)`, '', !closed.length || !state.enrollments.length ? 'disabled' : '')}${actionButton('new-session', 'Plus', 'เพิ่มรอบ', '', !writableSection() ? 'disabled' : '')}</div></div><div class="table-scroll"><table><thead><tr><th>วันที่</th><th>เริ่มเรียน</th><th>ปิดรับ</th><th>สถานะ</th><th></th></tr></thead><tbody>${sessions.length ? sessions.map((row) => `<tr><td>${date(row.start_time)}</td><td>${time(row.start_time)}</td><td>${time(row.checkin_close_time)}</td><td>${badge(sessionStatus(row))}</td><td><button class="text-button" data-action="select-session" data-id="${e(row.id)}">ดูรายชื่อ</button></td></tr>`).join('') : '<tr><td colspan="5" class="empty">ยังไม่มีรอบเช็คชื่อ</td></tr>'}</tbody></table></div></section>`;
 }
 
 function studentView() {
@@ -143,7 +152,8 @@ async function reload(preferred = {}) {
     const selectedCourse = courses.find((row) => row.id === courseId)?.id || courses[0]?.id || '';
     const sections = selectedCourse ? (await api(state.mode, `/api/sections?course_id=${encodeURIComponent(selectedCourse)}`)).sections : [];
     const sectionId = preferred.sectionId || state.sectionId;
-    const selectedSection = sections.find((row) => row.id === sectionId)?.id || sections[0]?.id || '';
+    const available = sections.filter((row) => state.showArchived || row.active !== false);
+    const selectedSection = available.find((row) => row.id === sectionId)?.id || available[0]?.id || '';
     const data = selectedSection ? await api(state.mode, `/api/section-data?section_id=${encodeURIComponent(selectedSection)}`) : { sessions: [], enrollments: [] };
     const sessions = data.sessions.sort((a, b) => Date.parse(b.start_time) - Date.parse(a.start_time));
     const selectedSession = sessions.find((row) => row.id === (preferred.sessionId || state.sessionId))?.id || sessions[0]?.id || '';
@@ -158,7 +168,7 @@ function clearQr() { state.qr = null; state.nextQr = 0; }
 
 async function refreshQr() {
   const current = session();
-  if (state.qrBusy || state.view !== 'teacher' || state.tab !== 'attendance' || !current || !['OPEN', 'LATE'].includes(current.status) || state.loading) return;
+  if (state.qrBusy || state.view !== 'teacher' || state.tab !== 'attendance' || !current || !writableSection() || !['OPEN', 'LATE'].includes(sessionStatus(current)) || state.loading) return;
   const generation = state.generation;
   const requestStarted = performance.now();
   state.qrBusy = true;
@@ -232,8 +242,23 @@ function creationModal(type) {
   if (type === 'session') {
     const now = Date.now();
     const local = (value) => { const d = new Date(value); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
-    showModal('เพิ่มรอบเช็คชื่อ', `<form id="create-session-form"><div class="form-grid">${field('เปิดรับเช็คชื่อ', 'checkin_open_time', local(now - 60000), 'datetime-local')}${field('เริ่มเรียน', 'start_time', local(now), 'datetime-local')}${field('เกณฑ์สาย', 'late_cutoff_time', local(now + 10 * 60000), 'datetime-local')}${field('ปิดรับเช็คชื่อ', 'checkin_close_time', local(now + 60 * 60000), 'datetime-local')}</div>${formFooter('สร้างรอบเช็คชื่อ')}</form>`);
+    const previous = session();
+    const anchor = new Date(now);
+    if (previous) { const start = new Date(previous.start_time); anchor.setHours(start.getHours(), start.getMinutes(), 0, 0); }
+    const defaults = { checkin_open_time: now - 60000, start_time: now, late_cutoff_time: now + 10 * 60000, checkin_close_time: now + 60 * 60000 };
+    const dateTimeField = (label, name) => {
+      const value = local(previous ? anchor.getTime() + Date.parse(previous[name]) - Date.parse(previous.start_time) : defaults[name]);
+      const list = (count, selected) => Array.from({ length: count }, (_, i) => { const text = String(i).padStart(2, '0'); return `<option value="${text}" ${text === selected ? 'selected' : ''}>${text}</option>`; }).join('');
+      return `<fieldset class="date-time-field"><legend>${label}</legend><input type="date" name="${name}_date" value="${value.slice(0, 10)}" aria-label="${label} วันที่" required><div class="clock-fields"><select name="${name}_hour" aria-label="${label} ชั่วโมง">${list(24, value.slice(11, 13))}</select><span>:</span><select name="${name}_minute" aria-label="${label} นาที">${list(60, value.slice(14, 16))}</select></div></fieldset>`;
+    };
+    showModal('เพิ่มรอบเช็คชื่อ', `<form id="create-session-form"><div class="form-grid">${dateTimeField('เปิดรับเช็คชื่อ', 'checkin_open_time')}${dateTimeField('เริ่มเรียน', 'start_time')}${dateTimeField('เกณฑ์สาย', 'late_cutoff_time')}${dateTimeField('ปิดรับเช็คชื่อ', 'checkin_close_time')}</div>${formFooter('สร้างรอบเช็คชื่อ')}</form>`);
   }
+}
+
+function downloadCsv(rows, filename) {
+  const url = URL.createObjectURL(new Blob([csvText(rows)], { type: 'text/csv;charset=utf-8' }));
+  const a = document.createElement('a'); a.href = url; a.download = filename; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 let importRows = [];
@@ -275,6 +300,10 @@ async function handleAction(action, button) {
     case 'logout': if (closeQrScanner()) modal.close(); state.authMode = 'login'; state.verificationSentAt = 0; await logout(); return;
     case 'new-course': creationModal('course'); return;
     case 'new-section': creationModal('section'); return;
+    case 'archive-section': {
+      showModal('ลบห้องเรียน', `<form id="archive-section-form"><p>ลบกลุ่ม ${e(selectedSection()?.section_code)} จากรายการใช้งาน?</p><p class="muted">เก็บรายชื่อและประวัติคะแนนไว้ สามารถคืนห้องเรียนได้</p>${formFooter('ยืนยันลบห้องเรียน')}</form>`); return;
+    }
+    case 'restore-section': await api(state.mode, '/api/restore-section', { section_id: state.sectionId }); await reload(); return;
     case 'new-session': creationModal('session'); return;
     case 'tab-attendance': state.tab = 'attendance'; render(); await refreshQr(); return;
     case 'tab-history': state.tab = 'history'; render(); return;
@@ -290,8 +319,21 @@ async function handleAction(action, button) {
     case 'open-qr': if (!state.qr || state.qr.deadline <= performance.now()) throw new Error('ยังไม่มี QR ที่ใช้งานได้'); window.open(state.qr.qr_url, '_blank', 'noopener,noreferrer'); return;
     case 'export': {
       const rows = attendanceRows(state.enrollments, state.attendance);
-      const text = csvText([['Student ID', 'Name', 'Email', 'Status', 'Check-in time'], ...rows.map((row) => [row.student_id, row.student_name, row.student_email, row.attendance_status, row.checkin_time])]);
-      const url = URL.createObjectURL(new Blob([text], { type: 'text/csv;charset=utf-8' })); const a = document.createElement('a'); a.href = url; a.download = `attendance-${session()?.session_date || 'roster'}.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); return;
+      downloadCsv([['Student ID', 'Name', 'Email', 'Status', 'Check-in time', 'Score'], ...rows.map((row) => [row.student_id, row.student_name, row.student_email, row.attendance_status, row.checkin_time, attendanceScore(row.attendance_status)])], `attendance-${session()?.id || 'roster'}.csv`); return;
+    }
+    case 'export-scores': {
+      const rounds = state.sessions.filter((row) => row.active !== false && sessionStatus(row) === 'CLOSED');
+      if (!rounds.length) throw new Error('ยังไม่มีรอบที่จบแล้ว');
+      const generation = state.generation, enrollments = [...state.enrollments], sectionId = state.sectionId;
+      const attendance = [];
+      for (const round of rounds) {
+        const result = await api(state.mode, `/api/attendance?session_id=${encodeURIComponent(round.id)}`);
+        if (state.generation !== generation || state.sectionId !== sectionId) throw new Error('กลุ่มเรียนเปลี่ยน กรุณาส่งออกอีกครั้ง');
+        attendance.push(...result.attendance.filter((row) => row.session_id === round.id));
+      }
+      const summary = scoreSummary(enrollments, rounds, attendance);
+      downloadCsv([['Student ID', 'Name', 'Email', ...summary.rounds.map((round, i) => `Round ${i + 1} ${date(round.start_time)} ${time(round.start_time)}`), 'Total score', 'Maximum score'],
+        ...summary.rows.map((row) => [row.student_id, row.student_name, row.student_email, ...row.points, row.total, summary.rounds.length])], `scores-${sectionId}-${summary.rounds.length}-rounds.csv`); return;
     }
     case 'reset-password': {
       const email = app.querySelector('[name="email"]').value.trim(); if (!email) throw new Error('กรุณากรอกอีเมลก่อน'); await resetPassword(email); toast('ส่งคำขอตั้งรหัสผ่านใหม่แล้ว'); return;
@@ -323,7 +365,11 @@ async function submit(form) {
     }
     case 'create-course-form': { const result = await api(state.mode, '/api/create-course', data); modal.close(); await reload({ courseId: result.course_id }); break; }
     case 'create-section-form': { const result = await api(state.mode, '/api/create-section', { ...data, course_id: state.courseId }); modal.close(); await reload({ sectionId: result.section_id }); break; }
-    case 'create-session-form': { const result = await api(state.mode, '/api/create-session', { ...data, ...sessionTimes(data), section_id: state.sectionId, session_date: data.start_time.slice(0, 10) }); modal.close(); await reload({ sessionId: result.session_id }); break; }
+    case 'create-session-form': {
+      const times = Object.fromEntries(['checkin_open_time', 'start_time', 'late_cutoff_time', 'checkin_close_time'].map((name) => [name, dateTimeFromParts(data, name)]));
+      const result = await api(state.mode, '/api/create-session', { ...sessionTimes(times), section_id: state.sectionId, session_date: times.start_time.slice(0, 10) }); modal.close(); await reload({ sessionId: result.session_id }); break;
+    }
+    case 'archive-section-form': await api(state.mode, '/api/archive-section', { section_id: state.sectionId }); modal.close(); await reload(); break;
     case 'close-session-form': await api(state.mode, '/api/close-session', { session_id: state.sessionId }); modal.close(); await reload(); break;
     case 'import-form': {
       const rows = validateStudents(importRows, studentEmailDomain);
@@ -357,7 +403,7 @@ async function perform(task, form) {
     buttons.forEach((button, i) => { button.disabled = disabled[i]; });
     const confirmImport = modal.querySelector('#confirm-import');
     if (confirmImport) confirmImport.disabled = !importRows.length || importRows.length > 200 || validateStudents(importRows, studentEmailDomain).some((row) => row.errors.length);
-    app.querySelectorAll('button').forEach((button) => { if (button.dataset.action && !['new-section', 'new-session', 'import', 'export'].includes(button.dataset.action)) button.disabled = false; });
+    app.querySelectorAll('button').forEach((button) => { if (button.dataset.action && !['new-section', 'new-session', 'import', 'export', 'export-scores', 'archive-section', 'restore-section', 'start-session'].includes(button.dataset.action)) button.disabled = false; });
     if (document.querySelector('main')?.getAttribute('aria-busy') === 'true') render();
   }
 }
@@ -379,6 +425,7 @@ document.addEventListener('change', (event) => {
   });
   if (input.id === 'course') perform(() => reload({ courseId: input.value }));
   if (input.id === 'section') perform(() => reload({ sectionId: input.value }));
+  if (input.id === 'show-archived') perform(() => { state.showArchived = input.checked; return reload(); });
   if (input.id === 'filter') { state.filter = input.value; document.querySelector('#roster-body').innerHTML = rosterBody(); }
   if (input.id === 'demo-student') { state.studentId = input.value; state.result = null; render(); }
   if (input.dataset.map) mapImport();
@@ -409,12 +456,19 @@ async function setupLive() {
   });
 }
 
+let sessionClockKey = '';
 setInterval(() => {
   updateCountdown();
+  const current = session();
+  if (state.view === 'teacher' && current && !state.busy && !state.loading) {
+    const now = Date.now();
+    const key = `${current.id}:${sessionStatus(current, now)}:${now >= Date.parse(current.checkin_open_time) && now <= Date.parse(current.checkin_close_time)}:${writableSection()}`;
+    if (key !== sessionClockKey) { sessionClockKey = key; if (sessionStatus(current, now) === 'CLOSED' || !writableSection()) clearQr(); render(); }
+  }
   if (!document.hidden && state.nextQr && performance.now() >= state.nextQr && !state.busy) refreshQr();
 }, 250);
 setInterval(async () => {
-  if (document.hidden || state.view !== 'teacher' || state.tab !== 'attendance' || !session() || !['OPEN', 'LATE'].includes(session().status) || state.busy || state.loading) return;
+  if (document.hidden || state.view !== 'teacher' || state.tab !== 'attendance' || !session() || !writableSection() || !['OPEN', 'LATE'].includes(sessionStatus(session())) || state.busy || state.loading) return;
   const generation = state.generation;
   try {
     const result = await api(state.mode, `/api/attendance?session_id=${encodeURIComponent(state.sessionId)}`);

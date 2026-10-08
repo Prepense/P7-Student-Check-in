@@ -79,7 +79,7 @@ export async function api(mode, path, body) {
   if (!response.ok) {
     const messages = { QR_TOKEN_EXPIRED: 'QR หมดอายุ กรุณาสแกนใหม่', TOKEN_EXPIRED: 'QR หมดอายุ กรุณาสแกนใหม่',
       INVALID_QR_SIGNATURE: 'ลายเซ็น QR ไม่ถูกต้อง กรุณาสแกน QR ใหม่จากหน้าผู้สอน', MALFORMED_QR_TOKEN: 'ลิงก์หรือโทเคน QR ไม่ครบ กรุณาสแกนใหม่',
-      CHECKIN_CLOSED: 'ปิดรับเช็คชื่อแล้ว', STUDENT_NOT_ENROLLED: 'ไม่มีรายชื่อในกลุ่มเรียน', NOT_ENROLLED: 'อีเมลหรือรายชื่อไม่ตรงกับกลุ่มเรียน',
+      CHECKIN_CLOSED: 'ปิดรับเช็คชื่อแล้ว', CHECKIN_NOT_OPEN: 'ยังไม่ถึงเวลาเปิดรับเช็คชื่อ', SECTION_ARCHIVED: 'ห้องเรียนถูกลบแล้ว กรุณาคืนห้องเรียนก่อน', STUDENT_NOT_ENROLLED: 'ไม่มีรายชื่อในกลุ่มเรียน', NOT_ENROLLED: 'อีเมลหรือรายชื่อไม่ตรงกับกลุ่มเรียน',
       INVALID_EMAIL_DOMAIN: 'ต้องใช้อีเมลมหาวิทยาลัย', INSTRUCTOR_ROLE_REQUIRED: 'บัญชีนี้ไม่มีสิทธิ์ผู้สอน',
       EMAIL_NOT_VERIFIED: 'กรุณายืนยันอีเมลก่อน', STUDENT_NOT_IN_ROSTER: 'ยังไม่พบอีเมลนี้ในรายชื่อ กรุณาติดต่ออาจารย์เพื่อนำเข้ารายชื่อ',
       AMBIGUOUS_STUDENT_EMAIL: 'อีเมลนี้ตรงกับหลายรหัสนักศึกษา กรุณาให้อาจารย์แก้รายชื่อ',

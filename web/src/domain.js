@@ -49,9 +49,51 @@ export function sessionTimes(data) {
 
 export function attendanceRows(enrollments, attendance) {
   const byId = new Map(attendance.map((row) => [row.student_id, row]));
-  return enrollments.filter((row) => row.status === 'ACTIVE').map((row) => ({
-    ...row, attendance_status: 'PENDING', checkin_time: null, ...byId.get(row.student_id),
+  return orderedRoster(enrollments.filter((row) => row.status === 'ACTIVE')).map((row) => ({
+    ...row, attendance_status: byId.get(row.student_id)?.attendance_status || 'PENDING',
+    checkin_time: byId.get(row.student_id)?.checkin_time || null,
   }));
+}
+
+export function orderedRoster(rows) {
+  return [...rows].sort((a, b) => String(b.roster_imported_at || '').localeCompare(String(a.roster_imported_at || '')) ||
+    (a.roster_order ?? Number.MAX_SAFE_INTEGER) - (b.roster_order ?? Number.MAX_SAFE_INTEGER) ||
+    String(a.student_id).localeCompare(String(b.student_id), 'en', { numeric: true }));
+}
+
+export const attendanceScore = (status) => status === 'ON_TIME' ? 1 : 0;
+
+export function sessionStatus(row, now = Date.now()) {
+  if (['OPEN', 'LATE'].includes(row.status) && now > Date.parse(row.checkin_close_time)) return 'CLOSED';
+  return row.status;
+}
+
+export function scoreSummary(enrollments, sessions, attendance) {
+  const rounds = [...sessions].sort((a, b) => Date.parse(a.start_time) - Date.parse(b.start_time) || a.id.localeCompare(b.id));
+  const scores = new Map();
+  for (const row of attendance) {
+    const key = JSON.stringify([row.session_id, row.student_id]);
+    scores.set(key, Math.max(scores.get(key) || 0, attendanceScore(row.attendance_status)));
+  }
+  return {
+    rounds,
+    rows: orderedRoster(enrollments.filter((row) => row.status === 'ACTIVE')).map((row) => {
+      const points = rounds.map((round) => scores.get(JSON.stringify([round.id, row.student_id])) || 0);
+      return { ...row, points, total: points.reduce((sum, point) => sum + point, 0) };
+    }),
+  };
+}
+
+export function dateTimeFromParts(data, name) {
+  const day = data[`${name}_date`], hour = data[`${name}_hour`], minute = data[`${name}_minute`];
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day || '') || !/^(?:[01]\d|2[0-3])$/.test(hour || '') || !/^[0-5]\d$/.test(minute || '')) {
+    throw new Error('วันที่หรือเวลาไม่ถูกต้อง');
+  }
+  const value = `${day}T${hour}:${minute}`;
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime()) || date.getFullYear() !== Number(day.slice(0, 4)) ||
+      date.getMonth() + 1 !== Number(day.slice(5, 7)) || date.getDate() !== Number(day.slice(8, 10))) throw new Error('วันที่หรือเวลาไม่ถูกต้อง');
+  return value;
 }
 
 export function csvText(rows) {

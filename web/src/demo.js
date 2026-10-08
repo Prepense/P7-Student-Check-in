@@ -29,6 +29,7 @@ export function demoCheckIn(store, token, studentId, now = Date.now()) {
   if (payload.expires <= now) fail('QR หมดอายุ กรุณาสแกนใหม่');
   const session = store.sessions.find((row) => row.id === payload.session_id);
   if (!session || !['OPEN', 'LATE'].includes(session.status) || !session.active) fail('รอบเช็คชื่อปิดแล้ว');
+  if (store.sections.find((row) => row.id === session.section_id)?.active === false) fail('ห้องเรียนถูกลบแล้ว');
   if (now < Date.parse(session.checkin_open_time) || now > Date.parse(session.checkin_close_time)) fail('อยู่นอกเวลาเช็คชื่อ');
   const student = store.enrollments.find((row) => row.section_id === session.section_id && row.student_id === studentId && row.status === 'ACTIVE');
   if (!student) fail('ไม่มีรายชื่อในกลุ่มเรียนนี้');
@@ -56,11 +57,18 @@ export function demoApi(path, data = {}, now = Date.now(), base = location.href,
     case '/api/create-section': {
       const section_id = id(); store.sections.push({ ...data, id: section_id, active: true }); result = { section_id }; break;
     }
+    case '/api/archive-section':
+    case '/api/restore-section': {
+      const section = store.sections.find((row) => row.id === data.section_id);
+      if (!section) fail('ไม่พบกลุ่มเรียน');
+      section.active = url.pathname === '/api/restore-section';
+      result = { section_id: section.id, active: section.active }; break;
+    }
     case '/api/create-session': {
       const session_id = id();
       const section = store.sections.find((row) => row.id === data.section_id);
       const course = store.courses.find((row) => row.id === section?.course_id);
-      if (!section || !course) fail('ไม่พบกลุ่มเรียน');
+      if (!section || !course || section.active === false) fail('ไม่พบกลุ่มเรียนที่เปิดใช้งาน');
       store.sessions.push({ ...data, ...sessionTimes(data), id: session_id, status: 'SCHEDULED', active: true, course_code: course.course_code, section_code: section.section_code });
       result = { session_id }; break;
     }
@@ -68,22 +76,30 @@ export function demoApi(path, data = {}, now = Date.now(), base = location.href,
     case '/api/close-session': {
       const session = store.sessions.find((row) => row.id === data.session_id);
       if (!session) fail('ไม่พบรอบเช็คชื่อ');
+      if (url.pathname === '/api/start-session') {
+        if (store.sections.find((row) => row.id === session.section_id)?.active === false) fail('ห้องเรียนถูกลบแล้ว');
+        if (now < Date.parse(session.checkin_open_time) || now > Date.parse(session.checkin_close_time)) fail('อยู่นอกเวลาเช็คชื่อ');
+        session.opened_at = new Date(now).toISOString(); session.closed_at = null;
+      } else session.closed_at = new Date(now).toISOString();
       session.status = url.pathname === '/api/start-session' ? 'OPEN' : 'CLOSED'; result = { status: session.status }; break;
     }
     case '/api/import-enrollments': {
+      if (store.sections.find((row) => row.id === data.section_id)?.active === false) fail('ห้องเรียนถูกลบแล้ว');
       const rows = validateStudents(data.students, emailDomain);
       if (!rows.length || rows.length > 200 || rows.some((row) => row.errors.length)) fail('รายชื่อไม่ผ่านการตรวจสอบ');
-      for (const row of rows) {
+      for (const [position, row] of rows.entries()) {
         const old = store.enrollments.find((value) => value.student_id === row.student_id && value.section_id === data.section_id);
         const { errors, ...student } = row;
-        if (old) Object.assign(old, student, { status: 'ACTIVE' });
-        else store.enrollments.push({ ...student, id: id(), section_id: data.section_id, status: 'ACTIVE' });
+        const order = { roster_order: position, roster_imported_at: new Date(now).toISOString() };
+        if (old) Object.assign(old, student, order, { status: 'ACTIVE' });
+        else store.enrollments.push({ ...student, ...order, id: id(), section_id: data.section_id, status: 'ACTIVE' });
       }
       result = { imported_count: rows.length }; break;
     }
     case '/api/issue-qr-token': {
       const session = store.sessions.find((row) => row.id === data.session_id);
       if (!session || !['OPEN', 'LATE'].includes(session.status)) fail('รอบเช็คชื่อยังไม่เปิด');
+      if (store.sections.find((row) => row.id === session.section_id)?.active === false) fail('ห้องเรียนถูกลบแล้ว');
       if (now < Date.parse(session.checkin_open_time) || now > Date.parse(session.checkin_close_time)) fail('อยู่นอกเวลาเช็คชื่อ');
       const token = `demo-${id()}`;
       store.tokens = Object.fromEntries(Object.entries(store.tokens).filter(([, value]) => value.expires > now));
