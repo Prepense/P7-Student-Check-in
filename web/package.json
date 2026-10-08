@@ -1,0 +1,19 @@
+{
+  "name": "student-check-in-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "firebase": "13.0.0",
+    "lucide": "1.52.0",
+    "qrcode": "1.5.4",
+    "read-excel-file": "9.3.12"
+  },
+  "devDependencies": { "vite": "8.3.3" },
+  "overrides": { "@grpc/grpc-js": "1.14.5" }
+}
