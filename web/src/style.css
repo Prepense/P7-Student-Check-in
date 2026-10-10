@@ -141,3 +141,6 @@ dialog.wide { width: min(1100px, calc(100% - 30px)); }dialog::backdrop { backgro
   .top-actions { margin-left: auto; }
   .mode-label select { max-width: none; }
 }
+.usb-controls { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+.usb-controls button { min-height: 44px; white-space: normal; }
+.usb-controls p { margin-bottom: 0; overflow-wrap: anywhere; text-align: center; }
