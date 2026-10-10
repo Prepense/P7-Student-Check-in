@@ -18,7 +18,7 @@ function fixture(t, { role = 'qr-host', cancel = false, timeout = 100 } = {}) {
       if (port.rejectType === command.type) Object.assign(reply, { type: 'error', code: 'NO_STREAM' });
       const encoded = new TextEncoder().encode('startup noise\n' + JSON.stringify(reply) + '\n');
       controller.enqueue(encoded.slice(0, 13)); controller.enqueue(encoded.slice(13));
-    } }),
+    }, abort() { if (port.abortThrows) throw new Error('Disconnected USB writer'); } }),
     async open(options) { assert.equal(options.baudRate, 115200); port.opened = true; },
     async setSignals(signals) { assert.deepEqual(signals, { dataTerminalReady: false, requestToSend: false }); },
     async close() { assert.equal(port.readable.locked, false); assert.equal(port.writable.locked, false); port.closed = true; },
@@ -121,4 +121,13 @@ test('USB unplug and firmware error stop transmission', async (t) => {
   // The second fixture exercises a fresh stream independently of the rejected port.
   second.unplug(); await new Promise((resolve) => setTimeout(resolve, 0)); await second.bridge.closing;
   assert.equal(second.bridge.connected, false); assert.equal(second.port.closed, true);
+});
+
+test('writer abort errors still release the port for reconnection', async (t) => {
+  const { bridge, port } = fixture(t);
+  await bridge.connect(); await bridge.pumping;
+  port.abortThrows = true;
+  await bridge.disconnect();
+  assert.equal(port.closed, true);
+  assert.equal(port.writable.locked, false);
 });

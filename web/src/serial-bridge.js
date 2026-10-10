@@ -41,7 +41,7 @@ export class SerialBridge {
       this.seq = 0;
       this.sent = null;
       this.status = hello;
-      await this.command('begin', { boot: this.boot, stream: this.stream });
+      await this.streamCommand('begin');
       this.connected = true;
       this.lastHeartbeat = -Infinity;
       this.lastStatus = -Infinity;
@@ -163,7 +163,8 @@ export class SerialBridge {
         try { await this.streamCommand('clear', { seq: ++this.seq }); } catch { /* The USB lease still fails closed. */ }
       }
       try { await this.reader?.cancel(); await this.readTask; } catch { /* Device may have been unplugged. */ }
-      try { await this.writer?.abort(); this.writer?.releaseLock(); } catch { /* Port may already be closed. */ }
+      try { await this.writer?.abort(); } catch { /* Device may have been unplugged. */ }
+      try { this.writer?.releaseLock(); } catch { /* Port may already be closed. */ }
       this.writer = null;
       try { await this.port?.close(); } catch { /* An unopened port has no locks to release. */ }
       this.port = null; this.status = null; this.sent = null;
