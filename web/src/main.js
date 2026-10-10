@@ -1,6 +1,6 @@
 import './style.css';
 import QRCode from 'qrcode';
-import { createIcons, GraduationCap, Settings, Plus, Play, Square, RefreshCw, Upload, Download, Search, QrCode, ExternalLink, Copy, X, CheckCircle, LogOut, CalendarDays, Users, ClipboardCheck, ArrowLeft, Camera, Trash2, RotateCcw, Usb } from 'lucide';
+import { createIcons, GraduationCap, Settings, Plus, Play, Square, RefreshCw, Upload, Download, Search, QrCode, ExternalLink, Copy, X, CheckCircle, LogOut, CalendarDays, Users, ClipboardCheck, ArrowLeft, Camera, Trash2, RotateCcw, Usb, Pencil } from 'lucide';
 import { readSheet } from 'read-excel-file/browser';
 import { DOMAIN, validateStudents, sessionTimes, attendanceRows, attendanceScore, scoreSummary, sessionStatus, dateTimeFromParts, csvText, qrTokenFromText, escapeHtml as e } from './domain.js';
 import { api, loadConfig, connectFirebase, login, signup, verifyEmail, refreshAccount, logout, resetPassword } from './backend.js';
@@ -8,7 +8,7 @@ import { DEMO_KEY, seedDemo } from './demo.js';
 import { mountQrScanner, closeQrScanner } from './scanner.js';
 import { SerialBridge } from './serial-bridge.js';
 
-const icons = { GraduationCap, Settings, Plus, Play, Square, RefreshCw, Upload, Download, Search, QrCode, ExternalLink, Copy, X, CheckCircle, LogOut, CalendarDays, Users, ClipboardCheck, ArrowLeft, Camera, Trash2, RotateCcw, Usb };
+const icons = { GraduationCap, Settings, Plus, Play, Square, RefreshCw, Upload, Download, Search, QrCode, ExternalLink, Copy, X, CheckCircle, LogOut, CalendarDays, Users, ClipboardCheck, ArrowLeft, Camera, Trash2, RotateCcw, Usb, Pencil };
 const app = document.querySelector('#app');
 const modal = document.querySelector('#modal');
 const initialUrl = new URL(location.href);
@@ -124,6 +124,7 @@ function teacherView() {
   ${state.loading ? '<div class="loading" role="status">กำลังโหลดข้อมูล...</div>' : ''}
   ${state.tab === 'history' ? historyView() : `<section class="session-toolbar"><div><h2>${current ? date(current.start_time) : 'รอบเช็คชื่อ'}</h2><div class="session-meta">${current ? `เปิดรับ ${time(current.checkin_open_time)} · เริ่มเรียน ${time(current.start_time)} · เกณฑ์สาย ${time(current.late_cutoff_time)} · ปิดรับ ${time(current.checkin_close_time)}` : 'ยังไม่มีรอบเช็คชื่อ'} ${current ? badge(status) : ''}</div></div><div class="actions">
     ${actionButton('new-session', 'CalendarDays', 'เพิ่มรอบ', '', !writableSection() ? 'disabled' : '')}
+    ${current ? iconButton('edit-session', 'Pencil', 'แก้ไขรอบ', !writableSection() || current.active === false ? 'disabled' : '') : ''}
     ${current ? (['OPEN', 'LATE'].includes(status) ? actionButton('close-session', 'Square', 'ปิดรอบ', 'danger') : actionButton('start-session', 'Play', status === 'CLOSED' ? 'เปิดอีกครั้ง' : 'เปิดเช็คชื่อ', 'primary', canOpen ? '' : 'disabled')) : ''}
   </div></section>
   <div class="attendance-layout"><section class="register"><div class="stats">
@@ -263,20 +264,23 @@ function settingsModal() {
 function creationModal(type) {
   if (type === 'course') showModal('เพิ่มรายวิชา', `<form id="create-course-form">${field('รหัสวิชา', 'course_code')}${field('ชื่อวิชา', 'course_name')}<div class="form-grid">${field('ปีการศึกษา', 'academic_year', '2569')}${field('ภาคเรียน', 'semester', '1')}</div>${formFooter('สร้างรายวิชา')}</form>`);
   if (type === 'section') showModal('เพิ่มกลุ่มเรียน', `<form id="create-section-form">${field('กลุ่มเรียน', 'section_code', '01')}${field('ห้องเรียน', 'room')} ${formFooter('สร้างกลุ่มเรียน')}</form>`);
-  if (type === 'session') {
+  if (type === 'session') sessionModal();
+}
+
+const localDateTime = (value) => { const d = new Date(value); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
+function sessionModal(existing = null) {
     const now = Date.now();
-    const local = (value) => { const d = new Date(value); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
     const previous = session();
     const anchor = new Date(now);
     if (previous) { const start = new Date(previous.start_time); anchor.setHours(start.getHours(), start.getMinutes(), 0, 0); }
     const defaults = { checkin_open_time: now - 60000, start_time: now, late_cutoff_time: now + 10 * 60000, checkin_close_time: now + 60 * 60000 };
     const dateTimeField = (label, name) => {
-      const value = local(previous ? anchor.getTime() + Date.parse(previous[name]) - Date.parse(previous.start_time) : defaults[name]);
+      const value = localDateTime(existing ? existing[name] : previous ? anchor.getTime() + Date.parse(previous[name]) - Date.parse(previous.start_time) : defaults[name]);
       const list = (count, selected) => Array.from({ length: count }, (_, i) => { const text = String(i).padStart(2, '0'); return `<option value="${text}" ${text === selected ? 'selected' : ''}>${text}</option>`; }).join('');
       return `<fieldset class="date-time-field"><legend>${label}</legend><input type="date" name="${name}_date" value="${value.slice(0, 10)}" aria-label="${label} วันที่" required><div class="clock-fields"><select name="${name}_hour" aria-label="${label} ชั่วโมง">${list(24, value.slice(11, 13))}</select><span>:</span><select name="${name}_minute" aria-label="${label} นาที">${list(60, value.slice(14, 16))}</select></div></fieldset>`;
     };
-    showModal('เพิ่มรอบเช็คชื่อ', `<form id="create-session-form"><div class="form-grid">${dateTimeField('เปิดรับเช็คชื่อ', 'checkin_open_time')}${dateTimeField('เริ่มเรียน', 'start_time')}${dateTimeField('เกณฑ์สาย', 'late_cutoff_time')}${dateTimeField('ปิดรับเช็คชื่อ', 'checkin_close_time')}</div>${formFooter('สร้างรอบเช็คชื่อ')}</form>`);
-  }
+    showModal(existing ? 'แก้ไขรอบเช็คชื่อ' : 'เพิ่มรอบเช็คชื่อ', `<form id="${existing ? 'edit' : 'create'}-session-form"><div class="form-grid">${dateTimeField('เปิดรับเช็คชื่อ', 'checkin_open_time')}${dateTimeField('เริ่มเรียน', 'start_time')}${dateTimeField('เกณฑ์สาย', 'late_cutoff_time')}${dateTimeField('ปิดรับเช็คชื่อ', 'checkin_close_time')}</div>${existing ? '<p class="muted">ข้อมูลเช็คชื่อและคะแนนที่บันทึกแล้วจะไม่เปลี่ยน</p>' : ''}${formFooter(existing ? 'บันทึกการแก้ไข' : 'สร้างรอบเช็คชื่อ')}</form>`);
+    if (existing) modal.querySelector('form').dataset.snapshot = JSON.stringify(existing);
 }
 
 function downloadCsv(rows, filename) {
@@ -335,6 +339,7 @@ async function handleAction(action, button) {
     }
     case 'restore-section': await api(state.mode, '/api/restore-section', { section_id: state.sectionId }); await reload(); return;
     case 'new-session': creationModal('session'); return;
+    case 'edit-session': if (writableSection() && session()?.active !== false && session()) sessionModal({ ...session() }); return;
     case 'tab-attendance': state.tab = 'attendance'; render(); await refreshQr(); return;
     case 'tab-history': state.tab = 'history'; clearQr(); render(); return;
     case 'import': importModal(); return;
@@ -399,6 +404,19 @@ async function submit(form) {
       const times = Object.fromEntries(['checkin_open_time', 'start_time', 'late_cutoff_time', 'checkin_close_time'].map((name) => [name, dateTimeFromParts(data, name)]));
       const result = await api(state.mode, '/api/create-session', { ...sessionTimes(times), section_id: state.sectionId, session_date: times.start_time.slice(0, 10) }); modal.close(); await reload({ sessionId: result.session_id }); break;
     }
+    case 'edit-session-form': {
+      const original = JSON.parse(form.dataset.snapshot);
+      const values = Object.fromEntries(['checkin_open_time', 'start_time', 'late_cutoff_time', 'checkin_close_time'].map((name) => {
+        const value = dateTimeFromParts(data, name);
+        return [name, value === localDateTime(original[name]) ? original[name] : value];
+      }));
+      const times = sessionTimes(values);
+      const result = await api(state.mode, '/api/update-session', {
+        ...times, session_id: original.id, expected_updated_at: original.updated_at || null,
+        session_date: times.start_time === original.start_time ? original.session_date : data.start_time_date,
+      });
+      clearQr(); modal.close(); await reload({ sessionId: result.session_id }); toast('แก้ไขรอบแล้ว'); break;
+    }
     case 'archive-section-form': await api(state.mode, '/api/archive-section', { section_id: state.sectionId }); modal.close(); await reload(); break;
     case 'close-session-form': await api(state.mode, '/api/close-session', { session_id: state.sessionId }); modal.close(); await reload(); break;
     case 'import-form': {
@@ -433,7 +451,7 @@ async function perform(task, form) {
     buttons.forEach((button, i) => { button.disabled = disabled[i]; });
     const confirmImport = modal.querySelector('#confirm-import');
     if (confirmImport) confirmImport.disabled = !importRows.length || importRows.length > 200 || validateStudents(importRows, studentEmailDomain).some((row) => row.errors.length);
-    app.querySelectorAll('button').forEach((button) => { if (button.dataset.action && !['new-section', 'new-session', 'import', 'export', 'export-scores', 'archive-section', 'restore-section', 'start-session'].includes(button.dataset.action)) button.disabled = false; });
+    app.querySelectorAll('button').forEach((button) => { if (button.dataset.action && !['new-section', 'new-session', 'edit-session', 'import', 'export', 'export-scores', 'archive-section', 'restore-section', 'start-session'].includes(button.dataset.action)) button.disabled = false; });
     if (document.querySelector('main')?.getAttribute('aria-busy') === 'true') render();
     updateUsbStatus();
   }

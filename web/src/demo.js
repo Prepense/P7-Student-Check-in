@@ -81,7 +81,21 @@ export function demoApi(path, data = {}, now = Date.now(), base = location.href,
         if (now < Date.parse(session.checkin_open_time) || now > Date.parse(session.checkin_close_time)) fail('อยู่นอกเวลาเช็คชื่อ');
         session.opened_at = new Date(now).toISOString(); session.closed_at = null;
       } else session.closed_at = new Date(now).toISOString();
-      session.status = url.pathname === '/api/start-session' ? 'OPEN' : 'CLOSED'; result = { status: session.status }; break;
+      session.status = url.pathname === '/api/start-session' ? 'OPEN' : 'CLOSED'; session.updated_at = new Date(now).toISOString(); result = { status: session.status }; break;
+    }
+    case '/api/update-session': {
+      const session = store.sessions.find((row) => row.id === data.session_id);
+      if (!session || session.active === false) fail('ไม่พบรอบเช็คชื่อที่เปิดใช้งาน');
+      if (store.sections.find((row) => row.id === session.section_id)?.active === false) fail('ห้องเรียนถูกลบแล้ว');
+      if (!Object.hasOwn(data, 'expected_updated_at') || data.expected_updated_at !== (session.updated_at || null)) fail('รอบนี้ถูกแก้ไขแล้ว กรุณารีเฟรชข้อมูล');
+      const times = sessionTimes(data);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(data.session_date || '') || new Date(data.session_date).toISOString().slice(0, 10) !== data.session_date) fail('วันที่ไม่ถูกต้อง');
+      const accepting = ['OPEN', 'LATE'].includes(session.status);
+      const wasOpen = accepting && now <= Date.parse(session.checkin_close_time);
+      if (wasOpen && Date.parse(times.checkin_open_time) > now) fail('กรุณาปิดรอบก่อนเปลี่ยนเวลาเปิดรับไปเป็นเวลาในอนาคต');
+      if (accepting && (!wasOpen || now > Date.parse(times.checkin_close_time))) { session.status = 'CLOSED'; session.closed_at ||= new Date(now).toISOString(); }
+      Object.assign(session, times, { session_date: data.session_date, updated_at: new Date(now).toISOString() });
+      result = { session_id: session.id, status: session.status }; break;
     }
     case '/api/import-enrollments': {
       if (store.sections.find((row) => row.id === data.section_id)?.active === false) fail('ห้องเรียนถูกลบแล้ว');

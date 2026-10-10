@@ -85,6 +85,12 @@ export async function api(mode, path, body) {
       AMBIGUOUS_STUDENT_EMAIL: 'อีเมลนี้ตรงกับหลายรหัสนักศึกษา กรุณาให้อาจารย์แก้รายชื่อ',
       ACCOUNT_LINK_CONFLICT: 'บัญชีไม่ตรงกับรายชื่อหรือผูกไว้กับบัญชีอื่นแล้ว กรุณาติดต่ออาจารย์',
       ACCOUNT_LINK_RETRY: 'รายชื่อเปลี่ยนระหว่างผูกบัญชี กรุณาลองตรวจสอบบัญชีอีกครั้ง', STUDENT_NOT_LINKED: 'ยังไม่ได้ผูกบัญชีกับรายชื่อนักศึกษา' };
+    Object.assign(messages, {
+      INVALID_SESSION_WINDOW: 'ลำดับเวลาต้องเป็น เปิดรับ <= เริ่มเรียน <= เกณฑ์สาย <= ปิดรับ',
+      SESSION_CHANGED: 'รอบนี้ถูกแก้ไขแล้ว กรุณาปิดหน้าต่าง รีเฟรชข้อมูล แล้วแก้ไขอีกครั้ง',
+      SESSION_INACTIVE: 'รอบนี้ถูกยกเลิกแล้ว ไม่สามารถแก้ไขได้',
+      OPEN_SESSION_FUTURE_WINDOW: 'กรุณาปิดรอบก่อนเปลี่ยนเวลาเปิดรับไปเป็นเวลาในอนาคต',
+    });
     throw new Error(messages[result.error] || result.message || `HTTP ${response.status}`);
   }
   return result;

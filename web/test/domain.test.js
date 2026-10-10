@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { validateStudents, sessionTimes, attendanceRows, attendanceScore, scoreSummary, sessionStatus, dateTimeFromParts, csvText, qrTokenFromText, escapeHtml } from '../src/domain.js';
-import { demoApi, demoCheckIn, seedDemo } from '../src/demo.js';
+import { demoApi, demoCheckIn, seedDemo, DEMO_KEY } from '../src/demo.js';
 
 const student = { student_id: 'DEMO-001', student_name: 'Student Example', student_email: 'student.example@rmuti.ac.th' };
 test('QR parsing preserves every case-sensitive token byte through links and paste', () => {
@@ -130,5 +130,31 @@ test('demo archives reversibly, keeps history and refuses new QR or reopening ou
     demoApi('/api/restore-section', { section_id: 'demo-section' }, now, 'https://demo.invalid/');
     assert.equal(demoApi('/api/issue-qr-token', { session_id: 'demo-session' }, now, 'https://demo.invalid/').token.startsWith('demo-'), true);
     assert.throws(() => demoApi('/api/start-session', { session_id: 'demo-session' }, now + 120 * 60000, 'https://demo.invalid/'));
+  } finally { if (original === undefined) delete globalThis.localStorage; else globalThis.localStorage = original; }
+});
+
+test('demo edits the same round without rewriting attendance, ignores identity/status injection, and rejects stale edits', () => {
+  const original = globalThis.localStorage, values = new Map(), now = Date.now();
+  globalThis.localStorage = { getItem: (key) => values.get(key) || null, setItem: (key, value) => values.set(key, value) };
+  try {
+    demoApi('/api/start-session', { session_id: 'demo-session' }, now, 'https://demo.invalid/');
+    const issued = demoApi('/api/issue-qr-token', { session_id: 'demo-session' }, now, 'https://demo.invalid/');
+    demoApi('/api/check-in', { token: issued.token, student_id: 'DEMO001' }, now, 'https://demo.invalid/');
+    const before = JSON.parse(values.get(DEMO_KEY));
+    const edit = { ...before.sessions[0], session_id: 'demo-session', expected_updated_at: before.sessions[0].updated_at, section_id: 'evil', status: 'CLOSED',
+      late_cutoff_time: new Date(now + 20 * 60000).toISOString(), checkin_close_time: new Date(now + 90 * 60000).toISOString() };
+    assert.equal(demoApi('/api/update-session', edit, now + 1, 'https://demo.invalid/').status, 'OPEN');
+    const after = JSON.parse(values.get(DEMO_KEY));
+    assert.equal(after.sessions.length, 1); assert.equal(after.sessions[0].id, 'demo-session'); assert.equal(after.sessions[0].section_id, 'demo-section');
+    assert.deepEqual(after.attendance, before.attendance);
+    assert.throws(() => demoApi('/api/update-session', edit, now + 2, 'https://demo.invalid/'));
+    const fresh = { ...edit, expected_updated_at: after.sessions[0].updated_at };
+    assert.throws(() => demoApi('/api/update-session', { ...fresh, late_cutoff_time: 'invalid' }, now + 3, 'https://demo.invalid/'));
+    assert.throws(() => demoApi('/api/update-session', { ...fresh, checkin_open_time: new Date(now + 1).toISOString() }, now, 'https://demo.invalid/'));
+    demoApi('/api/close-session', { session_id: 'demo-session' }, now + 4, 'https://demo.invalid/');
+    assert.throws(() => demoApi('/api/update-session', fresh, now + 5, 'https://demo.invalid/'));
+    fresh.expected_updated_at = JSON.parse(values.get(DEMO_KEY)).sessions[0].updated_at;
+    assert.equal(demoApi('/api/update-session', fresh, now + 5, 'https://demo.invalid/').status, 'CLOSED');
+    assert.deepEqual(JSON.parse(values.get(DEMO_KEY)).attendance, before.attendance);
   } finally { if (original === undefined) delete globalThis.localStorage; else globalThis.localStorage = original; }
 });
