@@ -39,6 +39,7 @@ const statusLabels = { SCHEDULED: 'ยังไม่เปิด', OPEN: 'ก�
 const badge = (status) => `<span class="badge ${e(status.toLowerCase())}">${e(statusLabels[status] || (status === 'LATE' ? 'สาย' : status))}</span>`;
 const canTeach = () => state.mode === 'demo' || ['instructor', 'admin'].includes(state.user?.role);
 const usbBridge = new SerialBridge({ onChange: updateUsbStatus });
+const qrRefreshAllowed = () => !document.hidden || usbBridge.connected;
 
 function updateUsbStatus() {
   const button = document.querySelector('[data-action="usb-connect"]');
@@ -52,7 +53,7 @@ function updateUsbStatus() {
 }
 
 function syncUsbQr() {
-  const enabled = state.mode === 'live' && canTeach() && state.view === 'teacher' && state.tab === 'attendance' && !document.hidden;
+  const enabled = state.mode === 'live' && canTeach() && state.view === 'teacher' && state.tab === 'attendance';
   const current = session();
   const active = enabled && !state.loading && !state.error && writableSection() && current && current.active !== false && ['OPEN', 'LATE'].includes(sessionStatus(current));
   usbBridge.update(active && state.qr ? { url: state.qr.qr_url, deadline: state.qr.deadline } : null, enabled);
@@ -192,14 +193,14 @@ function clearQr() { state.qr = null; state.nextQr = 0; state.qrEpoch++; syncUsb
 
 async function refreshQr() {
   const current = session();
-  if (document.hidden || state.qrBusy || state.view !== 'teacher' || state.tab !== 'attendance' || !current || !writableSection() || current.active === false || !['OPEN', 'LATE'].includes(sessionStatus(current)) || state.loading) return;
+  if (!qrRefreshAllowed() || state.qrBusy || state.view !== 'teacher' || state.tab !== 'attendance' || !current || !writableSection() || current.active === false || !['OPEN', 'LATE'].includes(sessionStatus(current)) || state.loading) return;
   const generation = state.generation;
   const epoch = state.qrEpoch;
   const requestStarted = performance.now();
   state.qrBusy = true;
   try {
     const issued = await api(state.mode, '/api/issue-qr-token', { session_id: current.id });
-    if (epoch !== state.qrEpoch || generation !== state.generation || current.id !== state.sessionId || state.view !== 'teacher' || state.tab !== 'attendance' || document.hidden || !['OPEN', 'LATE'].includes(sessionStatus(session()))) return;
+    if (epoch !== state.qrEpoch || generation !== state.generation || current.id !== state.sessionId || state.view !== 'teacher' || state.tab !== 'attendance' || !qrRefreshAllowed() || !['OPEN', 'LATE'].includes(sessionStatus(session()))) return;
     // Anchoring to request start avoids extending validity by network latency.
     state.qr = { ...issued, deadline: requestStarted + Math.max(0, Date.parse(issued.expires_at) - Date.parse(issued.issued_at)) };
     state.nextQr = performance.now() + issued.refresh_after_seconds * 1000;
@@ -329,7 +330,7 @@ async function handleAction(action, button) {
     case 'usb-connect': {
       if (state.mode !== 'live' || !canTeach()) return;
       if (usbBridge.connected) await usbBridge.disconnect();
-      else { await usbBridge.connect(); syncUsbQr(); }
+      else { await usbBridge.connect(); syncUsbQr(); if (usbBridge.connected && !state.qr) await refreshQr(); }
       updateUsbStatus(); return;
     }
     case 'new-course': creationModal('course'); return;
@@ -515,7 +516,7 @@ setInterval(() => {
     const key = `${current.id}:${sessionStatus(current, now)}:${now >= Date.parse(current.checkin_open_time) && now <= Date.parse(current.checkin_close_time)}:${writableSection()}`;
     if (key !== sessionClockKey) { sessionClockKey = key; if (sessionStatus(current, now) === 'CLOSED' || !writableSection()) clearQr(); render(); }
   }
-  if (!document.hidden && state.nextQr && performance.now() >= state.nextQr && !state.busy) refreshQr();
+  if (qrRefreshAllowed() && state.nextQr && performance.now() >= state.nextQr && !state.busy) refreshQr();
 }, 250);
 setInterval(async () => {
   if (document.hidden || state.view !== 'teacher' || state.tab !== 'attendance' || !session() || !writableSection() || !['OPEN', 'LATE'].includes(sessionStatus(session())) || state.busy || state.loading) return;
@@ -535,8 +536,11 @@ window.addEventListener('storage', (event) => {
 modal.addEventListener('close', () => { if (!modal.open) closeQrScanner(); });
 modal.addEventListener('cancel', closeQrScanner);
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) { clearQr(); syncUsbQr(); if (closeQrScanner()) modal.close(); }
-  else refreshQr();
+  if (document.hidden) {
+    // An open USB relay continues serving the room while the teacher uses another tab.
+    if (!usbBridge.connected) clearQr();
+    if (closeQrScanner()) modal.close();
+  } else { syncUsbQr(); void refreshQr(); }
 });
 window.addEventListener('pagehide', () => { closeQrScanner(); clearQr(); void usbBridge.disconnect(); });
 render();

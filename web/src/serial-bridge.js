@@ -85,7 +85,7 @@ export class SerialBridge {
       await this.streamCommand('clear', { seq: ++this.seq });
       this.sent = null;
     }
-    // Hidden/ineligible pages stop renewing the five-second USB lease.
+    // Ineligible views stop renewing the five-second USB lease; visibility alone does not.
     if (this.enabled) {
       if (this.now() - this.lastHeartbeat >= 900) {
         await this.streamCommand('heartbeat');
