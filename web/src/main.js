@@ -40,17 +40,23 @@ const date = (value) => value ? new Date(value).toLocaleDateString('th-TH', { da
 const statusLabels = { SCHEDULED: 'ยังไม่เปิด', OPEN: 'กำลังเช็คชื่อ', LATE: 'กำลังเช็คชื่อ', CLOSED: 'ปิดแล้ว', ON_TIME: 'ตรงเวลา', PENDING: 'ยังไม่เช็คชื่อ', LEAVE_APPROVED: 'ลาอนุมัติ · 1 คะแนน' };
 const badge = (status) => `<span class="badge ${e(status.toLowerCase())}">${e(statusLabels[status] || (status === 'LATE' ? 'สาย' : status))}</span>`;
 const canTeach = () => state.mode === 'demo' || ['instructor', 'admin'].includes(state.user?.role);
-const usbBridge = new SerialBridge({ onChange: updateUsbStatus });
+const usbBridge = new SerialBridge({ onChange: updateUsbStatus, onInterrupted: invalidateUsbQr, onRecovered: () => { invalidateUsbQr(); void refreshQr(); } });
 const qrRefreshAllowed = () => !document.hidden || usbBridge.connected;
+
+function invalidateUsbQr() {
+  clearQr();
+  // A pre-disconnect API response must not become the first QR in the new stream.
+  state.nextQr = performance.now();
+}
 
 function updateUsbStatus() {
   const button = document.querySelector('[data-action="usb-connect"]');
   const node = document.querySelector('#usb-status');
   if (!button || !node) return;
-  button.disabled = state.busy || usbBridge.connecting || !!usbBridge.closing || !navigator.serial;
-  button.querySelector('span').textContent = usbBridge.connecting ? 'กำลังเชื่อมต่อ…' : usbBridge.connected ? 'ตัดการเชื่อมต่อ USB' : 'เชื่อมต่อ ESP32';
+  button.disabled = state.busy || (usbBridge.connecting && !usbBridge.wanted) || (!!usbBridge.closing && !usbBridge.wanted) || !navigator.serial;
+  button.querySelector('span').textContent = usbBridge.wanted ? 'ตัดการเชื่อมต่อ USB' : usbBridge.connecting ? 'กำลังเชื่อมต่อ…' : 'เชื่อมต่อ ESP32';
   const online = usbBridge.status?.displays?.filter(Boolean).length || 0;
-  node.textContent = !navigator.serial ? 'ใช้ Chrome หรือ Edge บนคอมพิวเตอร์' : usbBridge.error ? 'USB ขัดข้อง กรุณาเชื่อมต่อใหม่' : usbBridge.connected ? `Host เชื่อมต่อแล้ว · ${online ? `Display ${online} เครื่อง` : 'รอ Display'}` : 'USB ยังไม่เชื่อมต่อ';
+  node.textContent = !navigator.serial ? 'ใช้ Chrome หรือ Edge บนคอมพิวเตอร์' : usbBridge.recovering ? 'กำลังกู้คืนการเชื่อมต่อ USB' : usbBridge.error ? 'USB ขัดข้อง กรุณาเชื่อมต่อใหม่' : usbBridge.connected ? `Host เชื่อมต่อแล้ว · ${online ? `Display ${online} เครื่อง` : 'รอ Display'}` : 'USB ยังไม่เชื่อมต่อ';
   node.title = usbBridge.error;
 }
 
@@ -59,7 +65,7 @@ function syncUsbQr() {
   const current = session();
   const active = enabled && !state.loading && !state.error && writableSection() && current && current.active !== false && ['OPEN', 'LATE'].includes(sessionStatus(current));
   usbBridge.update(active && state.qr ? { url: state.qr.qr_url, deadline: state.qr.deadline } : null, enabled);
-  if (!enabled && usbBridge.connected) void usbBridge.disconnect();
+  if (!enabled && (usbBridge.wanted || usbBridge.connected || usbBridge.connecting)) void usbBridge.disconnect();
 }
 
 function toast(message, error = false) {
@@ -374,7 +380,7 @@ async function handleAction(action, button) {
     case 'logout': clearQr(); await usbBridge.disconnect(); if (closeQrScanner()) modal.close(); state.authMode = 'login'; state.verificationSentAt = 0; await logout(); return;
     case 'usb-connect': {
       if (state.mode !== 'live' || !canTeach()) return;
-      if (usbBridge.connected) await usbBridge.disconnect();
+      if (usbBridge.wanted || usbBridge.connected) await usbBridge.disconnect();
       else { await usbBridge.connect(); syncUsbQr(); if (usbBridge.connected && !state.qr) await refreshQr(); }
       updateUsbStatus(); return;
     }
@@ -640,7 +646,7 @@ document.addEventListener('visibilitychange', () => {
     // An open USB relay continues serving the room while the teacher uses another tab.
     if (!usbBridge.connected) clearQr();
     if (closeQrScanner()) modal.close();
-  } else { syncUsbQr(); void refreshQr(); }
+  } else { syncUsbQr(); usbBridge.resume(); void refreshQr(); }
 });
 window.addEventListener('pagehide', () => { closeQrScanner(); clearQr(); void usbBridge.disconnect(); });
 render();

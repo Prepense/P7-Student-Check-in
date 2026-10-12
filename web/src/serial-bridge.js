@@ -2,8 +2,8 @@ const LIVE_URL = /^https:\/\/prepense\.github\.io\/P7-Student-Check-in\/\?t=[A-Z
 const HEX = /^[a-f0-9]{16}$/;
 
 export class SerialBridge {
-  constructor({ serial = globalThis.navigator?.serial, now = () => performance.now(), onChange = () => {}, timeout = 1200 } = {}) {
-    Object.assign(this, { serial, now, onChange, timeout });
+  constructor({ serial = globalThis.navigator?.serial, now = () => performance.now(), onChange = () => {}, onInterrupted = () => {}, onRecovered = () => {}, timeout = 1200, retryDelay = 1000 } = {}) {
+    Object.assign(this, { serial, now, onChange, onInterrupted, onRecovered, timeout, retryDelay });
     this.connected = false;
     this.connecting = false;
     this.enabled = true;
@@ -14,19 +14,36 @@ export class SerialBridge {
     this.seq = 0;
     this.status = null;
     this.error = '';
+    this.wanted = false;
+    this.recovering = false;
+    this.connectionEpoch = 0;
+    this.retryAttempt = 0;
   }
 
-  async connect() {
-    if (this.connecting || this.connected || this.closing) return;
+  connect(recovery = false) {
+    if (this.connecting || this.connected || this.closing) return this.connectTask;
+    if (recovery && (!this.wanted || !this.enabled || !this.savedPort)) return;
+    const epoch = ++this.connectionEpoch;
+    this.connectTask = this.openConnection(recovery, epoch).finally(() => { this.connectTask = null; });
+    return this.connectTask;
+  }
+
+  async openConnection(recovery, epoch) {
     if (!this.serial) throw new Error('Web Serial is unavailable. Use desktop Chrome or Edge over HTTPS.');
+    const checkCancelled = () => {
+      if (epoch !== this.connectionEpoch) throw new DOMException('USB connection cancelled.', 'AbortError');
+    };
     this.connecting = true;
-    this.error = '';
+    if (!recovery) this.error = '';
     this.onChange();
     try {
-      // Port selection must stay inside the user's click handler.
-      this.port = await this.serial.requestPort({ filters: [{ usbVendorId: 0x10c4, usbProductId: 0xea60 }] });
+      // Recovery reopens only the exact port selected in this page's user gesture.
+      this.port = recovery ? this.savedPort : await this.serial.requestPort({ filters: [{ usbVendorId: 0x10c4, usbProductId: 0xea60 }] });
+      checkCancelled();
       await this.port.open({ baudRate: 115200, bufferSize: 8192 });
+      checkCancelled();
       await this.port.setSignals({ dataTerminalReady: false, requestToSend: false });
+      checkCancelled();
       this.writer = this.port.writable.getWriter();
       this.reader = this.port.readable.getReader();
       this.readTask = this.readLoop();
@@ -35,39 +52,53 @@ export class SerialBridge {
         try { hello = await this.command('hello'); break; }
         catch (error) { if (attempt === 3 || !this.reader) throw error; }
       }
-      if (hello?.role !== 'qr-host' || !HEX.test(hello.boot) || !hello.ap_ready) throw new Error('Selected device is not a ready QR host.');
+      checkCancelled();
+      if (hello?.role !== 'qr-host' || !HEX.test(hello.boot)) throw new Error('Selected device is not a ready QR host.');
+      if (!hello.ap_ready) throw new Error('QR host radio is not ready.');
       this.boot = hello.boot;
       this.stream = Array.from(crypto.getRandomValues(new Uint8Array(8)), (byte) => byte.toString(16).padStart(2, '0')).join('');
       this.seq = 0;
       this.sent = null;
       this.status = hello;
       await this.streamCommand('begin');
+      checkCancelled();
+      if (!this.reader) throw new Error('QR host USB disconnected during handshake.');
       this.connected = true;
+      this.wanted = true;
+      this.savedPort = this.port;
+      this.error = '';
+      this.retryAttempt = 0;
+      if (recovery) { this.target = null; this.onRecovered(); }
+      checkCancelled();
+      this.recovering = false;
       this.lastHeartbeat = -Infinity;
       this.lastStatus = -Infinity;
       this.timer = setInterval(() => this.pump(), 250);
       this.pump();
     } catch (error) {
-      await this.disconnect();
-      if (error.name !== 'NotFoundError') { this.error = error.message; throw error; }
+      await this.closePort();
+      if (epoch !== this.connectionEpoch || error.name === 'AbortError') return;
+      if (error.name !== 'NotFoundError') this.error = error.message;
+      if (!recovery) { this.wanted = false; if (error.name !== 'NotFoundError') throw error; }
+      else if (error.name === 'SecurityError' || error.message === 'Selected device is not a ready QR host.') { this.wanted = false; this.recovering = false; }
     } finally {
       this.connecting = false;
       this.onChange();
+      if (recovery) this.scheduleRecovery();
     }
   }
 
   update(qr, enabled = true) {
     this.enabled = enabled;
-    this.target = qr && LIVE_URL.test(qr.url) && qr.url.length <= 768 && Number.isFinite(qr.deadline) ? { ...qr } : null;
+    this.target = !this.recovering && qr && LIVE_URL.test(qr.url) && qr.url.length <= 768 && Number.isFinite(qr.deadline) ? { ...qr } : null;
     this.pump();
   }
 
   pump() {
     if (!this.connected || this.pumping || this.closing) return this.pumping;
     this.pumping = this.flush().catch((error) => {
-      this.error = error.message;
       // Do not await our own pump while closing the port.
-      void this.disconnect();
+      this.fail(error);
     }).finally(() => { this.pumping = null; });
     return this.pumping;
   }
@@ -147,11 +178,46 @@ export class SerialBridge {
       if (!this.closing) throw new Error('QR host USB disconnected.');
     } catch (error) {
       for (const pending of this.pending.values()) pending.reject(error);
-      if (!this.closing) { this.error = error.message; void this.disconnect(); }
+      if (!this.closing && !this.connecting) this.fail(error);
     } finally { this.reader?.releaseLock(); this.reader = null; }
   }
 
   disconnect() {
+    this.wanted = false;
+    this.recovering = false;
+    this.error = '';
+    this.connectionEpoch++;
+    clearTimeout(this.retryTimer);
+    this.target = null;
+    this.onChange();
+    // Let an in-flight open/handshake observe cancellation before releasing its locks.
+    if (this.connecting) return this.connectTask.catch(() => {}).then(() => this.closePort());
+    return this.closePort();
+  }
+
+  fail(error) {
+    if (this.closing || this.recovering) return;
+    this.error = error.message;
+    this.recovering = this.wanted && this.enabled;
+    this.target = null;
+    this.connected = false;
+    this.onInterrupted();
+    void this.closePort().then(() => this.scheduleRecovery());
+  }
+
+  scheduleRecovery() {
+    clearTimeout(this.retryTimer);
+    if (!this.wanted || !this.enabled || this.connected || !this.savedPort) return;
+    this.retryTimer = setTimeout(() => { void this.connect(true); }, Math.min(10000, this.retryDelay * 2 ** Math.min(this.retryAttempt++, 4)));
+  }
+
+  resume() {
+    if (!this.wanted || !this.enabled || this.connected || this.connecting || this.closing) return;
+    clearTimeout(this.retryTimer);
+    void this.connect(true);
+  }
+
+  closePort() {
     if (this.closing) return this.closing;
     clearInterval(this.timer);
     const wasConnected = this.connected;
