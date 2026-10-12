@@ -52,6 +52,10 @@ export function attendanceRows(enrollments, attendance) {
   return orderedRoster(enrollments.filter((row) => row.status === 'ACTIVE')).map((row) => ({
     ...row, attendance_status: byId.get(row.student_id)?.attendance_status || 'PENDING',
     checkin_time: byId.get(row.student_id)?.checkin_time || null,
+    leave_note: byId.get(row.student_id)?.leave_note || '',
+    leave_approved_at: byId.get(row.student_id)?.leave_approved_at || null,
+    source: byId.get(row.student_id)?.source || '',
+    attendance_version: byId.get(row.student_id)?.attendance_version || null,
   }));
 }
 
@@ -61,7 +65,7 @@ export function orderedRoster(rows) {
     String(a.student_id).localeCompare(String(b.student_id), 'en', { numeric: true }));
 }
 
-export const attendanceScore = (status) => status === 'ON_TIME' ? 1 : 0;
+export const attendanceScore = (status) => ['ON_TIME', 'LEAVE_APPROVED'].includes(status) ? 1 : 0;
 
 export function sessionStatus(row, now = Date.now()) {
   if (['OPEN', 'LATE'].includes(row.status) && now > Date.parse(row.checkin_close_time)) return 'CLOSED';
@@ -71,15 +75,17 @@ export function sessionStatus(row, now = Date.now()) {
 export function scoreSummary(enrollments, sessions, attendance) {
   const rounds = [...sessions].sort((a, b) => Date.parse(a.start_time) - Date.parse(b.start_time) || a.id.localeCompare(b.id));
   const scores = new Map();
+  const notes = new Map();
   for (const row of attendance) {
     const key = JSON.stringify([row.session_id, row.student_id]);
     scores.set(key, Math.max(scores.get(key) || 0, attendanceScore(row.attendance_status)));
+    if (row.attendance_status === 'LEAVE_APPROVED') notes.set(key, `LEAVE_APPROVED: ${row.leave_note || ''}`);
   }
   return {
     rounds,
     rows: orderedRoster(enrollments.filter((row) => row.status === 'ACTIVE')).map((row) => {
       const points = rounds.map((round) => scores.get(JSON.stringify([round.id, row.student_id])) || 0);
-      return { ...row, points, total: points.reduce((sum, point) => sum + point, 0) };
+      return { ...row, points, notes: rounds.map((round) => notes.get(JSON.stringify([round.id, row.student_id])) || ''), total: points.reduce((sum, point) => sum + point, 0) };
     }),
   };
 }

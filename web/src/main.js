@@ -32,10 +32,12 @@ const actionButton = (action, name, label, style = '', extra = '') => `<button c
 const options = (rows, selected, label) => rows.map((row) => `<option value="${e(row.id)}" ${row.id === selected ? 'selected' : ''}>${e(label(row))}</option>`).join('');
 const session = () => state.sessions.find((row) => row.id === state.sessionId);
 const selectedSection = () => state.sections.find((row) => row.id === state.sectionId);
-const writableSection = () => !!state.sectionId && selectedSection()?.active !== false;
+const selectedCourse = () => state.courses.find((row) => row.id === state.courseId);
+const writableCourse = () => !!state.courseId && selectedCourse()?.active !== false;
+const writableSection = () => writableCourse() && !!state.sectionId && selectedSection()?.active !== false;
 const time = (value) => value ? new Date(value).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }) : '-';
 const date = (value) => value ? new Date(value).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' }) : '-';
-const statusLabels = { SCHEDULED: 'ยังไม่เปิด', OPEN: 'กำลังเช็คชื่อ', LATE: 'กำลังเช็คชื่อ', CLOSED: 'ปิดแล้ว', ON_TIME: 'ตรงเวลา', PENDING: 'ยังไม่เช็คชื่อ' };
+const statusLabels = { SCHEDULED: 'ยังไม่เปิด', OPEN: 'กำลังเช็คชื่อ', LATE: 'กำลังเช็คชื่อ', CLOSED: 'ปิดแล้ว', ON_TIME: 'ตรงเวลา', PENDING: 'ยังไม่เช็คชื่อ', LEAVE_APPROVED: 'ลาอนุมัติ · 1 คะแนน' };
 const badge = (status) => `<span class="badge ${e(status.toLowerCase())}">${e(statusLabels[status] || (status === 'LATE' ? 'สาย' : status))}</span>`;
 const canTeach = () => state.mode === 'demo' || ['instructor', 'admin'].includes(state.user?.role);
 const usbBridge = new SerialBridge({ onChange: updateUsbStatus });
@@ -109,18 +111,20 @@ function teacherView() {
   const current = session();
   const status = current && sessionStatus(current);
   const visibleSections = state.sections.filter((row) => state.showArchived || row.active !== false);
+  const visibleCourses = state.courses.filter((row) => state.showArchived || row.active !== false);
   const canOpen = writableSection() && current?.active !== false && Date.now() >= Date.parse(current?.checkin_open_time) && Date.now() <= Date.parse(current?.checkin_close_time);
   const rows = attendanceRows(state.enrollments, state.attendance);
-  const present = rows.filter((row) => row.attendance_status !== 'PENDING').length;
+  const present = rows.filter((row) => ['ON_TIME', 'LATE'].includes(row.attendance_status)).length;
+  const leave = rows.filter((row) => row.attendance_status === 'LEAVE_APPROVED').length;
   const late = rows.filter((row) => row.attendance_status === 'LATE').length;
   return `<section class="selectors" aria-label="รายวิชาและกลุ่มเรียน">
-    <label>รายวิชา<select id="course" ${state.loading ? 'disabled' : ''}>${state.courses.length ? options(state.courses, state.courseId, (row) => `${row.course_code} · ${row.course_name}`) : '<option>ยังไม่มีรายวิชา</option>'}</select></label>
-    ${iconButton('new-course', 'Plus', 'เพิ่มรายวิชา')}
+    <label>รายวิชา<select id="course" ${state.loading ? 'disabled' : ''}>${visibleCourses.length ? options(visibleCourses, state.courseId, (row) => `${row.course_code} · ${row.course_name}${row.active === false ? ' · ลบแล้ว' : ''}`) : '<option>ยังไม่มีรายวิชา</option>'}</select></label>
+    <div class="section-actions">${iconButton('new-course', 'Plus', 'เพิ่มรายวิชา')}${iconButton(selectedCourse()?.active === false ? 'restore-course' : 'archive-course', selectedCourse()?.active === false ? 'RotateCcw' : 'Trash2', selectedCourse()?.active === false ? 'คืนรายวิชา' : 'ลบรายวิชา', !state.courseId ? 'disabled' : '')}</div>
     <label>กลุ่มเรียน<select id="section" ${state.loading ? 'disabled' : ''}>${visibleSections.length ? options(visibleSections, state.sectionId, (row) => `กลุ่ม ${row.section_code}${row.room ? ` · ${row.room}` : ''}${row.active === false ? ' · ลบแล้ว' : ''}`) : '<option>ยังไม่มีกลุ่มเรียน</option>'}</select></label>
-    <div class="section-actions">${iconButton('new-section', 'Plus', 'เพิ่มกลุ่มเรียน', !state.courseId ? 'disabled' : '')}
+    <div class="section-actions">${iconButton('new-section', 'Plus', 'เพิ่มกลุ่มเรียน', !writableCourse() ? 'disabled' : '')}
     ${iconButton(selectedSection()?.active === false ? 'restore-section' : 'archive-section', selectedSection()?.active === false ? 'RotateCcw' : 'Trash2', selectedSection()?.active === false ? 'คืนห้องเรียน' : 'ลบห้องเรียน', !state.sectionId ? 'disabled' : '')}</div>
   </section>
-  <label class="archive-toggle"><input id="show-archived" type="checkbox" ${state.showArchived ? 'checked' : ''}>แสดงห้องเรียนที่ลบ</label>
+  <label class="archive-toggle"><input id="show-archived" type="checkbox" ${state.showArchived ? 'checked' : ''}>แสดงรายวิชาและห้องเรียนที่ลบ</label>
   <div class="tabs" role="tablist"><button role="tab" aria-selected="${state.tab === 'attendance'}" data-action="tab-attendance">เช็คชื่อ</button><button role="tab" aria-selected="${state.tab === 'history'}" data-action="tab-history">รอบที่ผ่านมา <span>${state.sessions.length}</span></button></div>
   ${state.loading ? '<div class="loading" role="status">กำลังโหลดข้อมูล...</div>' : ''}
   ${state.tab === 'history' ? historyView() : `<section class="session-toolbar"><div><h2>${current ? date(current.start_time) : 'รอบเช็คชื่อ'}</h2><div class="session-meta">${current ? `เปิดรับ ${time(current.checkin_open_time)} · เริ่มเรียน ${time(current.start_time)} · เกณฑ์สาย ${time(current.late_cutoff_time)} · ปิดรับ ${time(current.checkin_close_time)}` : 'ยังไม่มีรอบเช็คชื่อ'} ${current ? badge(status) : ''}</div></div><div class="actions">
@@ -129,10 +133,10 @@ function teacherView() {
     ${current ? (['OPEN', 'LATE'].includes(status) ? actionButton('close-session', 'Square', 'ปิดรอบ', 'danger') : actionButton('start-session', 'Play', status === 'CLOSED' ? 'เปิดอีกครั้ง' : 'เปิดเช็คชื่อ', 'primary', canOpen ? '' : 'disabled')) : ''}
   </div></section>
   <div class="attendance-layout"><section class="register"><div class="stats">
-    <div><span>รายชื่อทั้งหมด</span><strong>${rows.length}<small> คน</small></strong></div><div><span>เช็คชื่อแล้ว</span><strong class="green">${present}<small> คน</small></strong></div><div><span>มาสาย</span><strong class="amber">${late}<small> คน</small></strong></div><div><span>ยังไม่เช็คชื่อ</span><strong>${rows.length - present}<small> คน</small></strong></div>
+    <div><span>รายชื่อทั้งหมด</span><strong>${rows.length}<small> คน</small></strong></div><div><span>เช็คชื่อแล้ว</span><strong class="green">${present}<small> คน</small></strong></div><div><span>มาสาย</span><strong class="amber">${late}<small> คน</small></strong></div><div><span>ลาอนุมัติ</span><strong>${leave}<small> คน</small></strong></div><div><span>ยังไม่เช็คชื่อ</span><strong>${rows.length - present - leave}<small> คน</small></strong></div>
   </div><div class="register-toolbar"><h2>รายชื่อนักศึกษา</h2><div class="actions">${actionButton('import', 'Upload', 'นำเข้า Excel', '', !writableSection() ? 'disabled' : '')}${iconButton('export', 'Download', 'ดาวน์โหลด CSV', !rows.length ? 'disabled' : '')}${iconButton('refresh', 'RefreshCw', 'รีเฟรชข้อมูล')}</div></div>
-  <div class="filters"><label class="search">${icon('Search')}<input id="search" placeholder="ค้นหารหัส ชื่อ หรืออีเมล" aria-label="ค้นหานักศึกษา" value="${e(state.search)}"></label><select id="filter" aria-label="กรองสถานะ"><option value="ALL">ทุกสถานะ</option><option value="ON_TIME" ${state.filter === 'ON_TIME' ? 'selected' : ''}>ตรงเวลา</option><option value="LATE" ${state.filter === 'LATE' ? 'selected' : ''}>สาย</option><option value="PENDING" ${state.filter === 'PENDING' ? 'selected' : ''}>ยังไม่เช็คชื่อ</option></select></div>
-  <div class="table-scroll"><table><thead><tr><th>นักศึกษา</th><th>สถานะ</th><th>เวลาเช็คชื่อ</th></tr></thead><tbody id="roster-body">${rosterBody()}</tbody></table></div><div class="table-footer"><span id="row-count"></span><span>ปรับปรุงล่าสุด <span id="updated-time">${state.loaded ? time(Date.now()) : '-'}</span></span></div>
+  <div class="filters"><label class="search">${icon('Search')}<input id="search" placeholder="ค้นหารหัส ชื่อ หรืออีเมล" aria-label="ค้นหานักศึกษา" value="${e(state.search)}"></label><select id="filter" aria-label="กรองสถานะ"><option value="ALL">ทุกสถานะ</option><option value="ON_TIME" ${state.filter === 'ON_TIME' ? 'selected' : ''}>ตรงเวลา</option><option value="LATE" ${state.filter === 'LATE' ? 'selected' : ''}>สาย</option><option value="LEAVE_APPROVED" ${state.filter === 'LEAVE_APPROVED' ? 'selected' : ''}>ลาอนุมัติ</option><option value="PENDING" ${state.filter === 'PENDING' ? 'selected' : ''}>ยังไม่เช็คชื่อ</option></select></div>
+  <div class="table-scroll"><table class="roster-table"><thead><tr><th>นักศึกษา</th><th>สถานะ / หมายเหตุ</th><th>เวลาเช็คชื่อ</th><th>การลา</th></tr></thead><tbody id="roster-body">${rosterBody()}</tbody></table></div><div class="table-footer"><span id="row-count"></span><span>ปรับปรุงล่าสุด <span id="updated-time">${state.loaded ? time(Date.now()) : '-'}</span></span></div>
   </section><aside class="qr-panel"><div class="qr-heading"><h2>${icon('QrCode')} QR เช็คชื่อ</h2>${current ? badge(status) : ''}</div>
   <div class="qr-frame"><canvas id="qr-canvas" width="320" height="320" hidden aria-label="QR code สำหรับเช็คชื่อ"></canvas><div id="qr-placeholder">${icon('QrCode')}<span>${current && writableSection() && ['OPEN', 'LATE'].includes(status) ? 'กำลังรับ QR...' : 'รอเปิดรอบเช็คชื่อ'}</span></div></div>
   <div class="qr-countdown"><span>QR VALID</span><strong id="qr-seconds">--</strong><span>วินาที</span></div><div class="qr-progress"><div id="qr-progress"></div></div>
@@ -145,8 +149,8 @@ function rosterBody() {
   const term = state.search.trim().toLowerCase();
   const rows = attendanceRows(state.enrollments, state.attendance).filter((row) =>
     (state.filter === 'ALL' || row.attendance_status === state.filter) && `${row.student_id} ${row.student_name} ${row.student_email}`.toLowerCase().includes(term));
-  queueMicrotask(() => { const node = document.querySelector('#row-count'); if (node) node.textContent = `${rows.length} รายการ`; });
-  return rows.length ? rows.map((row, i) => `<tr><td><div class="student-cell"><span class="row-number">${i + 1}</span><div><strong>${e(row.student_name)}</strong><small>${e(row.student_id)} <span class="email">· ${e(row.student_email)}</span></small></div></div></td><td>${row.attendance_status === 'LATE' ? '<span class="badge late">สาย</span>' : badge(row.attendance_status)}</td><td class="mono">${time(row.checkin_time)}</td></tr>`).join('') : '<tr><td colspan="3" class="empty">ไม่พบรายชื่อ</td></tr>';
+  queueMicrotask(() => { const node = document.querySelector('#row-count'); if (node) node.textContent = `${rows.length} รายการ`; createIcons({ icons }); });
+  return rows.length ? rows.map((row, i) => `<tr><td><div class="student-cell"><span class="row-number">${i + 1}</span><div><strong>${e(row.student_name)}</strong><small>${e(row.student_id)} <span class="email">· ${e(row.student_email)}</span></small></div></div></td><td>${row.attendance_status === 'LATE' ? '<span class="badge late">สาย</span>' : badge(row.attendance_status)}${row.leave_note ? `<small class="leave-note">${e(row.leave_note)}</small>` : ''}</td><td class="mono">${time(row.checkin_time)}</td><td>${iconButton('attendance-leave', row.attendance_status === 'LEAVE_APPROVED' ? 'Pencil' : 'ClipboardCheck', row.attendance_status === 'LEAVE_APPROVED' ? 'แก้ไขการลา' : 'อนุมัติลา', `data-id="${e(row.student_id)}" ${!writableSection() || !session() || session().active === false ? 'disabled' : ''}`)}</td></tr>`).join('') : '<tr><td colspan="4" class="empty">ไม่พบรายชื่อ</td></tr>';
 }
 
 function historyView() {
@@ -174,7 +178,8 @@ async function reload(preferred = {}) {
   try {
     const { courses } = await api(state.mode, '/api/courses');
     const courseId = preferred.courseId || state.courseId;
-    const selectedCourse = courses.find((row) => row.id === courseId)?.id || courses[0]?.id || '';
+    const availableCourses = courses.filter((row) => state.showArchived || row.active !== false);
+    const selectedCourse = availableCourses.find((row) => row.id === courseId)?.id || availableCourses[0]?.id || '';
     const sections = selectedCourse ? (await api(state.mode, `/api/sections?course_id=${encodeURIComponent(selectedCourse)}`)).sections : [];
     const sectionId = preferred.sectionId || state.sectionId;
     const available = sections.filter((row) => state.showArchived || row.active !== false);
@@ -284,6 +289,15 @@ function sessionModal(existing = null) {
     if (existing) modal.querySelector('form').dataset.snapshot = JSON.stringify(existing);
 }
 
+function leaveModal(studentId) {
+  if (!writableSection() || !session() || session().active === false) return;
+  const row = attendanceRows(state.enrollments, state.attendance).find((value) => value.student_id === studentId);
+  if (!row) throw new Error('ไม่พบรายชื่อในกลุ่มเรียนนี้');
+  const approved = row.attendance_status === 'LEAVE_APPROVED';
+  showModal(approved ? 'แก้ไขการลา' : 'อนุมัติลา', `<form id="attendance-leave-form"><p><strong>${e(row.student_name)}</strong><br>${e(row.student_id)} · ${e(date(session().start_time))}</p><p>${approved ? 'ลาอนุมัติ' : e(row.attendance_status === 'LATE' ? 'สาย' : statusLabels[row.attendance_status])} · คะแนนหลังอนุมัติ 1 คะแนน</p><label>เหตุผล / หมายเหตุ<textarea name="note" rows="4" maxlength="1000" required>${e(row.leave_note)}</textarea></label>${approved ? '<button type="button" class="danger" data-action="revoke-leave">ยกเลิกอนุมัติลา</button>' : ''}${formFooter(approved ? 'บันทึกหมายเหตุ' : 'ยืนยันอนุมัติลา')}</form>`);
+  modal.querySelector('form').dataset.snapshot = JSON.stringify({ session_id: state.sessionId, student_id: studentId, expected_version: row.attendance_version });
+}
+
 function downloadCsv(rows, filename) {
   const url = URL.createObjectURL(new Blob([csvText(rows)], { type: 'text/csv;charset=utf-8' }));
   const a = document.createElement('a'); a.href = url; a.download = filename; a.click();
@@ -334,6 +348,17 @@ async function handleAction(action, button) {
       updateUsbStatus(); return;
     }
     case 'new-course': creationModal('course'); return;
+    case 'archive-course': {
+      showModal('ลบรายวิชา', `<form id="archive-course-form"><p>ลบรายวิชา ${e(selectedCourse()?.course_code)} · ${e(selectedCourse()?.course_name)} จากรายการใช้งาน?</p><p class="muted">หยุดรับเช็คชื่อทุกกลุ่มเรียนในวิชานี้ เก็บรายชื่อ ประวัติ และคะแนนไว้ สามารถคืนรายวิชาได้</p>${formFooter('ยืนยันลบรายวิชา')}</form>`);
+      modal.querySelector('form').dataset.courseId = state.courseId; return;
+    }
+    case 'restore-course': await api(state.mode, '/api/restore-course', { course_id: state.courseId }); await reload(); return;
+    case 'attendance-leave': leaveModal(button.dataset.id); return;
+    case 'revoke-leave': {
+      const snapshot = modal.querySelector('form').dataset.snapshot;
+      showModal('ยกเลิกอนุมัติลา', `<form id="revoke-leave-form"><p>ยืนยันยกเลิกอนุมัติลาและคืนสถานะกับคะแนนเดิมของนักศึกษารายนี้?</p>${formFooter('ยืนยันยกเลิกอนุมัติลา')}</form>`);
+      modal.querySelector('form').dataset.snapshot = snapshot; return;
+    }
     case 'new-section': creationModal('section'); return;
     case 'archive-section': {
       showModal('ลบห้องเรียน', `<form id="archive-section-form"><p>ลบกลุ่ม ${e(selectedSection()?.section_code)} จากรายการใช้งาน?</p><p class="muted">เก็บรายชื่อและประวัติคะแนนไว้ สามารถคืนห้องเรียนได้</p>${formFooter('ยืนยันลบห้องเรียน')}</form>`); return;
@@ -355,7 +380,7 @@ async function handleAction(action, button) {
     case 'open-qr': if (!state.qr || state.qr.deadline <= performance.now()) throw new Error('ยังไม่มี QR ที่ใช้งานได้'); window.open(state.qr.qr_url, '_blank', 'noopener,noreferrer'); return;
     case 'export': {
       const rows = attendanceRows(state.enrollments, state.attendance);
-      downloadCsv([['Student ID', 'Name', 'Email', 'Status', 'Check-in time', 'Score'], ...rows.map((row) => [row.student_id, row.student_name, row.student_email, row.attendance_status, row.checkin_time, attendanceScore(row.attendance_status)])], `attendance-${session()?.id || 'roster'}.csv`); return;
+      downloadCsv([['Student ID', 'Name', 'Email', 'Status', 'Check-in time', 'Score', 'Source', 'Leave note', 'Leave approved at'], ...rows.map((row) => [row.student_id, row.student_name, row.student_email, row.attendance_status, row.checkin_time, attendanceScore(row.attendance_status), row.source, row.leave_note, row.leave_approved_at])], `attendance-${session()?.id || 'roster'}.csv`); return;
     }
     case 'export-scores': {
       const rounds = state.sessions.filter((row) => row.active !== false && sessionStatus(row) === 'CLOSED');
@@ -368,8 +393,8 @@ async function handleAction(action, button) {
         attendance.push(...result.attendance.filter((row) => row.session_id === round.id));
       }
       const summary = scoreSummary(enrollments, rounds, attendance);
-      downloadCsv([['Student ID', 'Name', 'Email', ...summary.rounds.map((round, i) => `Round ${i + 1} ${date(round.start_time)} ${time(round.start_time)}`), 'Total score', 'Maximum score'],
-        ...summary.rows.map((row) => [row.student_id, row.student_name, row.student_email, ...row.points, row.total, summary.rounds.length])], `scores-${sectionId}-${summary.rounds.length}-rounds.csv`); return;
+      downloadCsv([['Student ID', 'Name', 'Email', ...summary.rounds.map((round, i) => `Round ${i + 1} ${date(round.start_time)} ${time(round.start_time)}`), 'Total score', 'Maximum score', ...summary.rounds.map((_, i) => `Round ${i + 1} leave note`)],
+        ...summary.rows.map((row) => [row.student_id, row.student_name, row.student_email, ...row.points, row.total, summary.rounds.length, ...row.notes])], `scores-${sectionId}-${summary.rounds.length}-rounds.csv`); return;
     }
     case 'reset-password': {
       const email = app.querySelector('[name="email"]').value.trim(); if (!email) throw new Error('กรุณากรอกอีเมลก่อน'); await resetPassword(email); toast('ส่งคำขอตั้งรหัสผ่านใหม่แล้ว'); return;
@@ -380,6 +405,20 @@ async function handleAction(action, button) {
 async function submit(form) {
   const data = Object.fromEntries(new FormData(form));
   switch (form.id) {
+    case 'archive-course-form': {
+      await api(state.mode, '/api/archive-course', { course_id: form.dataset.courseId });
+      state.showArchived = true; clearQr(); modal.close(); await reload(); toast('ลบรายวิชาแล้ว'); break;
+    }
+    case 'attendance-leave-form':
+    case 'revoke-leave-form': {
+      const snapshot = JSON.parse(form.dataset.snapshot);
+      if (snapshot.session_id !== state.sessionId || !writableSection()) throw new Error('รอบหรือกลุ่มเรียนเปลี่ยน กรุณาเปิดข้อมูลใหม่');
+      const generation = state.generation;
+      await api(state.mode, '/api/attendance-leave', { ...snapshot, action: form.id === 'revoke-leave-form' ? 'REVOKE' : 'APPROVE', note: data.note });
+      const result = await api(state.mode, `/api/attendance?session_id=${encodeURIComponent(snapshot.session_id)}`);
+      if (generation === state.generation && snapshot.session_id === state.sessionId) state.attendance = result.attendance;
+      modal.close(); render(); toast(form.id === 'revoke-leave-form' ? 'ยกเลิกอนุมัติลาแล้ว' : 'บันทึกการลาแล้ว'); break;
+    }
     case 'settings-form': {
       const firebase = JSON.parse(data.firebase);
       if (!firebase.apiKey || !firebase.authDomain || !firebase.projectId || !firebase.appId || firebase.private_key || firebase.type === 'service_account') throw new Error('ต้องเป็น Firebase Web config ไม่ใช่ service account');
@@ -452,7 +491,7 @@ async function perform(task, form) {
     buttons.forEach((button, i) => { button.disabled = disabled[i]; });
     const confirmImport = modal.querySelector('#confirm-import');
     if (confirmImport) confirmImport.disabled = !importRows.length || importRows.length > 200 || validateStudents(importRows, studentEmailDomain).some((row) => row.errors.length);
-    app.querySelectorAll('button').forEach((button) => { if (button.dataset.action && !['new-section', 'new-session', 'edit-session', 'import', 'export', 'export-scores', 'archive-section', 'restore-section', 'start-session'].includes(button.dataset.action)) button.disabled = false; });
+    app.querySelectorAll('button').forEach((button) => { if (button.dataset.action && !['new-section', 'new-session', 'edit-session', 'attendance-leave', 'import', 'export', 'export-scores', 'archive-section', 'restore-section', 'archive-course', 'restore-course', 'start-session'].includes(button.dataset.action)) button.disabled = false; });
     if (document.querySelector('main')?.getAttribute('aria-busy') === 'true') render();
     updateUsbStatus();
   }

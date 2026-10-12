@@ -30,12 +30,13 @@ export function demoCheckIn(store, token, studentId, now = Date.now()) {
   const session = store.sessions.find((row) => row.id === payload.session_id);
   if (!session || !['OPEN', 'LATE'].includes(session.status) || !session.active) fail('รอบเช็คชื่อปิดแล้ว');
   if (store.sections.find((row) => row.id === session.section_id)?.active === false) fail('ห้องเรียนถูกลบแล้ว');
+  if (store.courses.find((row) => row.id === session.course_id)?.active === false) fail('รายวิชาถูกลบแล้ว');
   if (now < Date.parse(session.checkin_open_time) || now > Date.parse(session.checkin_close_time)) fail('อยู่นอกเวลาเช็คชื่อ');
   const student = store.enrollments.find((row) => row.section_id === session.section_id && row.student_id === studentId && row.status === 'ACTIVE');
   if (!student) fail('ไม่มีรายชื่อในกลุ่มเรียนนี้');
   const existing = store.attendance.find((row) => row.session_id === session.id && row.student_id === studentId);
   if (existing) return { result: 'ALREADY_CHECKED_IN', ...existing };
-  const attendance = { ...student, id: id(), session_id: session.id, course_code: session.course_code, section_code: session.section_code, checkin_time: new Date(now).toISOString(), attendance_status: now <= Date.parse(session.late_cutoff_time) ? 'ON_TIME' : 'LATE' };
+  const attendance = { ...student, id: id(), session_id: session.id, course_code: session.course_code, section_code: session.section_code, checkin_time: new Date(now).toISOString(), attendance_status: now <= Date.parse(session.late_cutoff_time) ? 'ON_TIME' : 'LATE', source: 'QR', attendance_version: id() };
   store.attendance.push(attendance);
   return { result: 'CREATED', ...attendance };
 }
@@ -46,7 +47,49 @@ export function demoApi(path, data = {}, now = Date.now(), base = location.href,
   const url = new URL(path, 'https://demo.invalid');
   const sectionId = url.searchParams.get('section_id');
   let result;
+  const protectedPaths = ['/api/create-session', '/api/update-session', '/api/start-session', '/api/import-enrollments', '/api/issue-qr-token', '/api/attendance-leave'];
+  const targetSection = store.sections.find((row) => row.id === (data.section_id || store.sessions.find((round) => round.id === data.session_id)?.section_id));
+  const courseId = url.pathname === '/api/create-section' ? data.course_id : protectedPaths.includes(url.pathname) ? targetSection?.course_id : null;
+  if (courseId && store.courses.find((row) => row.id === courseId)?.active === false) fail('รายวิชาถูกลบแล้ว กรุณาคืนรายวิชาก่อน');
   switch (url.pathname) {
+    case '/api/archive-course':
+    case '/api/restore-course': {
+      const course = store.courses.find((row) => row.id === data.course_id);
+      if (!course) fail('ไม่พบรายวิชา');
+      course.active = url.pathname === '/api/restore-course';
+      course.archived_at = course.active ? null : new Date(now).toISOString();
+      result = { course_id: course.id, active: course.active }; break;
+    }
+    case '/api/attendance-leave': {
+      const session = store.sessions.find((row) => row.id === data.session_id);
+      const student = store.enrollments.find((row) => row.section_id === session?.section_id && row.student_id === data.student_id && row.status === 'ACTIVE');
+      if (!session || session.active === false || !student || targetSection?.active === false) fail('ไม่พบรอบหรือรายชื่อที่เปิดใช้งาน');
+      const existing = store.attendance.find((row) => row.session_id === session.id && row.student_id === student.student_id);
+      if (!Object.hasOwn(data, 'expected_version') || data.expected_version !== (existing?.attendance_version || null)) fail('ข้อมูลเช็คชื่อเปลี่ยนแล้ว กรุณารีเฟรชรายชื่อ');
+      if (!['APPROVE', 'REVOKE'].includes(data.action)) fail('คำสั่งการลาไม่ถูกต้อง');
+      const note = typeof data.note === 'string' ? data.note.trim() : '';
+      if (data.action === 'APPROVE' && (!note || note.length > 1000)) fail('กรุณาใส่หมายเหตุไม่เกิน 1000 ตัวอักษร');
+      const previousStatus = existing?.attendance_status || 'PENDING', previousNote = existing?.leave_note || null;
+      let status;
+      if (data.action === 'APPROVE') {
+        const row = existing || { ...student, id: id(), session_id: session.id, course_code: session.course_code, section_code: session.section_code, checkin_time: null };
+        const original = previousStatus === 'LEAVE_APPROVED' ? row.leave_original || null : existing ? { attendance_status: row.attendance_status, source: row.source || null } : null;
+        Object.assign(row, { attendance_status: 'LEAVE_APPROVED', source: 'INSTRUCTOR_LEAVE', leave_note: note,
+          leave_original: original, leave_approved_at: new Date(now).toISOString(), leave_approved_by: 'demo-instructor', attendance_version: id() });
+        if (!existing) store.attendance.push(row);
+        status = 'LEAVE_APPROVED';
+      } else {
+        if (previousStatus !== 'LEAVE_APPROVED') fail('ยังไม่มีการอนุมัติลา');
+        status = existing.leave_original?.attendance_status || 'PENDING';
+        if (existing.leave_original) Object.assign(existing, existing.leave_original, { leave_original: null, leave_note: null,
+          leave_approved_at: null, leave_approved_by: null, attendance_version: id() });
+        else store.attendance.splice(store.attendance.indexOf(existing), 1);
+      }
+      (store.attendance_adjustments ||= []).push({ session_id: session.id, student_id: student.student_id, action: data.action,
+        previous_status: previousStatus, attendance_status: status, note: data.action === 'APPROVE' ? note : previousNote,
+        previous_note: previousNote, changed_by: 'demo-instructor', changed_at: new Date(now).toISOString() });
+      result = { attendance_status: status }; break;
+    }
     case '/api/courses': result = { courses: store.courses }; break;
     case '/api/sections': result = { sections: store.sections.filter((row) => row.course_id === url.searchParams.get('course_id')) }; break;
     case '/api/section-data': result = { sessions: store.sessions.filter((row) => row.section_id === sectionId), enrollments: store.enrollments.filter((row) => row.section_id === sectionId) }; break;

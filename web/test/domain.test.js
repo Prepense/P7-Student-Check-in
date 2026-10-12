@@ -158,3 +158,54 @@ test('demo edits the same round without rewriting attendance, ignores identity/s
     assert.deepEqual(JSON.parse(values.get(DEMO_KEY)).attendance, before.attendance);
   } finally { if (original === undefined) delete globalThis.localStorage; else globalThis.localStorage = original; }
 });
+
+test('approved leave scores once, preserves notes and separates QR time from manual credit', () => {
+  const enrollments = [{ ...student, status: 'ACTIVE' }];
+  const attendance = [{ student_id: student.student_id, session_id: 'round', attendance_status: 'LEAVE_APPROVED',
+    leave_note: 'Medical leave, approved\nSecond line', source: 'INSTRUCTOR_LEAVE', checkin_time: null, attendance_version: 'version' }];
+  const row = attendanceRows(enrollments, attendance)[0];
+  assert.equal(row.leave_note, attendance[0].leave_note); assert.equal(row.checkin_time, null);
+  assert.equal(row.attendance_version, 'version'); assert.equal(attendanceScore(row.attendance_status), 1);
+  const summary = scoreSummary(enrollments, [{ id: 'round', start_time: new Date().toISOString() }], [...attendance, ...attendance]);
+  assert.equal(summary.rows[0].total, 1); assert.deepEqual(summary.rows[0].notes, [`LEAVE_APPROVED: ${row.leave_note}`]);
+  assert.ok(csvText([[row.leave_note]]).includes('Medical leave, approved\nSecond line'));
+});
+
+test('demo leave approval, note correction, revoke and course archive preserve original evidence', () => {
+  const original = globalThis.localStorage, values = new Map(), now = Date.now();
+  globalThis.localStorage = { getItem: key => values.get(key) || null, setItem: (key, value) => values.set(key, value) };
+  const call = (path, body) => demoApi(path, body, now, 'https://demo.invalid/');
+  const state = () => JSON.parse(values.get(DEMO_KEY));
+  const leave = (body = {}) => ({ session_id: 'demo-session', student_id: 'DEMO001', action: 'APPROVE', note: 'Approved reason',
+    expected_version: state().attendance.find(row => row.student_id === 'DEMO001')?.attendance_version || null, ...body });
+  try {
+    call('/api/courses');
+    assert.throws(() => call('/api/attendance-leave', leave({ note: '' })));
+    call('/api/attendance-leave', leave());
+    const stale = leave();
+    call('/api/attendance-leave', leave({ note: 'Corrected note' }));
+    assert.throws(() => call('/api/attendance-leave', stale));
+    assert.equal(state().attendance[0].checkin_time, null);
+    call('/api/attendance-leave', leave({ action: 'REVOKE' }));
+    assert.equal(state().attendance.length, 0); assert.equal(state().attendance_adjustments.length, 3);
+    call('/api/start-session', { session_id: 'demo-session' });
+    const qr = call('/api/issue-qr-token', { session_id: 'demo-session' });
+    call('/api/check-in', { student_id: 'DEMO001', token: qr.token });
+    const before = state().attendance[0];
+    call('/api/attendance-leave', leave());
+    assert.equal(call('/api/check-in', { student_id: 'DEMO001', token: qr.token }).attendance_status, 'LEAVE_APPROVED');
+    call('/api/attendance-leave', leave({ action: 'REVOKE' }));
+    assert.equal(state().attendance[0].attendance_status, before.attendance_status);
+    assert.equal(state().attendance[0].checkin_time, before.checkin_time);
+    const records = JSON.stringify(state().attendance);
+    call('/api/archive-course', { course_id: 'demo-course' });
+    for (const [path, body] of [['/api/create-section', { course_id: 'demo-course' }], ['/api/attendance-leave', leave()],
+      ['/api/issue-qr-token', { session_id: 'demo-session' }], ['/api/start-session', { session_id: 'demo-session' }]]) assert.throws(() => call(path, body));
+    assert.throws(() => call('/api/check-in', { student_id: 'DEMO002', token: qr.token }));
+    assert.equal(JSON.stringify(state().attendance), records);
+    assert.equal(call('/api/section-data?section_id=demo-section').sessions.length, 1);
+    call('/api/restore-course', { course_id: 'demo-course' });
+    assert.equal(state().sections[0].active, true);
+    assert.equal(call('/api/issue-qr-token', { session_id: 'demo-session' }).token.startsWith('demo-'), true);
+  } finally { if (original === undefined) delete globalThis.localStorage; else globalThis.localStorage = original; }
+});
