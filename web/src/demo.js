@@ -12,8 +12,8 @@ export function seedDemo(now = Date.now()) {
     status: 'SCHEDULED', active: true,
     checkin_open_time: new Date(now - 60000).toISOString(),
     start_time: new Date(now).toISOString(),
-    late_cutoff_time: new Date(now + 10 * 60000).toISOString(),
-    checkin_close_time: new Date(now + 60 * 60000).toISOString(),
+    late_cutoff_time: new Date(now + 15 * 60000).toISOString(),
+    checkin_close_time: new Date(now + 30 * 60000).toISOString(),
   };
   return {
     courses: [{ id: 'demo-course', course_code: 'IOT101', course_name: 'Internet of Things', academic_year: '2569', semester: '1', active: true }],
@@ -47,18 +47,55 @@ export function demoApi(path, data = {}, now = Date.now(), base = location.href,
   const url = new URL(path, 'https://demo.invalid');
   const sectionId = url.searchParams.get('section_id');
   let result;
-  const protectedPaths = ['/api/create-session', '/api/update-session', '/api/start-session', '/api/import-enrollments', '/api/issue-qr-token', '/api/attendance-leave'];
+  const protectedPaths = ['/api/create-session', '/api/update-session', '/api/start-session', '/api/close-session', '/api/import-enrollments', '/api/issue-qr-token', '/api/attendance-leave', '/api/archive-section', '/api/restore-section'];
   const targetSection = store.sections.find((row) => row.id === (data.section_id || store.sessions.find((round) => round.id === data.session_id)?.section_id));
   const courseId = url.pathname === '/api/create-section' ? data.course_id : protectedPaths.includes(url.pathname) ? targetSection?.course_id : null;
-  if (courseId && store.courses.find((row) => row.id === courseId)?.active === false) fail('รายวิชาถูกลบแล้ว กรุณาคืนรายวิชาก่อน');
+  const targetCourse = store.courses.find(row => row.id === courseId);
+  if (targetCourse?.purge_state === 'IN_PROGRESS') fail('รายวิชาเริ่มลบถาวรแล้ว');
+  if (targetCourse?.active === false && !['/api/close-session', '/api/archive-section', '/api/restore-section'].includes(url.pathname)) fail('รายวิชาถูกลบแล้ว กรุณาคืนรายวิชาก่อน');
   switch (url.pathname) {
     case '/api/archive-course':
     case '/api/restore-course': {
       const course = store.courses.find((row) => row.id === data.course_id);
       if (!course) fail('ไม่พบรายวิชา');
+      if (course.purge_state === 'IN_PROGRESS') fail('รายวิชาเริ่มลบถาวรแล้ว ไม่สามารถคืนได้');
       course.active = url.pathname === '/api/restore-course';
       course.archived_at = course.active ? null : new Date(now).toISOString();
+      course.course_version = id();
       result = { course_id: course.id, active: course.active }; break;
+    }
+    case '/api/purge-course': {
+      const receipt = store.course_purges?.find(row => row.purge_id === data.purge_id);
+      if (data.backup_confirmed !== true) fail('กรุณายืนยันการส่งออกข้อมูล');
+      if (receipt) {
+        if (receipt.course_id !== data.course_id || receipt.course_code !== data.confirmation) fail('รหัสยืนยันไม่ตรง');
+        result = { done: true, purge_id: receipt.purge_id, deleted_count: receipt.deleted_count }; break;
+      }
+      const course = store.courses.find(row => row.id === data.course_id);
+      if (!course || course.active !== false || data.confirmation !== course.course_code) fail('กรุณาเก็บรายวิชาไว้ย้อนหลังและพิมพ์รหัสวิชาให้ตรง');
+      if (course.purge_state !== 'IN_PROGRESS') {
+        if (data.purge_id || data.expected_version !== course.course_version) fail('รายวิชาเปลี่ยน กรุณารีเฟรช');
+        Object.assign(course, { purge_state: 'IN_PROGRESS', purge_id: id(), purge_deleted_count: 0 });
+        result = { done: false, purge_id: course.purge_id, deleted_count: 0 }; break;
+      }
+      if (data.purge_id !== course.purge_id) fail('กรุณาใช้รหัสการลบเดิม');
+      const section = store.sections.find(row => row.course_id === course.id);
+      let batch = [], collection;
+      const sectionSessions = section ? store.sessions.filter(row => row.section_id === section.id).map(row => row.id) : [];
+      for (const name of ['attendance_adjustments', 'attendance', 'enrollments', 'sessions']) {
+        batch = (store[name] || []).filter(row => section ? row.section_id === section.id || sectionSessions.includes(row.session_id) : row.course_id === course.id).slice(0, 50);
+        if (batch.length) { collection = name; break; }
+      }
+      if (!batch.length && section) { batch = [section]; collection = 'sections'; }
+      if (batch.length) {
+        if (collection === 'sessions') store.tokens = Object.fromEntries(Object.entries(store.tokens).filter(([, value]) => !batch.some(round => round.id === value.session_id)));
+        store[collection] = store[collection].filter(row => !batch.includes(row));
+        course.purge_deleted_count += batch.length;
+      } else {
+        (store.course_purges ||= []).push({ purge_id: course.purge_id, course_id: course.id, course_code: course.course_code, deleted_count: course.purge_deleted_count + 1 });
+        store.courses = store.courses.filter(row => row !== course);
+      }
+      result = { done: !batch.length, purge_id: course.purge_id, deleted_count: course.purge_deleted_count + (batch.length ? 0 : 1) }; break;
     }
     case '/api/attendance-leave': {
       const session = store.sessions.find((row) => row.id === data.session_id);
@@ -85,7 +122,7 @@ export function demoApi(path, data = {}, now = Date.now(), base = location.href,
           leave_approved_at: null, leave_approved_by: null, attendance_version: id() });
         else store.attendance.splice(store.attendance.indexOf(existing), 1);
       }
-      (store.attendance_adjustments ||= []).push({ session_id: session.id, student_id: student.student_id, action: data.action,
+      (store.attendance_adjustments ||= []).push({ course_id: session.course_id, section_id: session.section_id, session_id: session.id, student_id: student.student_id, action: data.action,
         previous_status: previousStatus, attendance_status: status, note: data.action === 'APPROVE' ? note : previousNote,
         previous_note: previousNote, changed_by: 'demo-instructor', changed_at: new Date(now).toISOString() });
       result = { attendance_status: status }; break;

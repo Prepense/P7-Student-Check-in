@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { validateStudents, sessionTimes, attendanceRows, attendanceScore, scoreSummary, sessionStatus, dateTimeFromParts, csvText, qrTokenFromText, escapeHtml } from '../src/domain.js';
+import { validateStudents, sessionTimes, sessionDefaults, attendanceRows, attendanceScore, scoreSummary, sessionStatus, dateTimeFromParts, csvText, qrTokenFromText, escapeHtml } from '../src/domain.js';
 import { demoApi, demoCheckIn, seedDemo, DEMO_KEY } from '../src/demo.js';
 
 const student = { student_id: 'DEMO-001', student_name: 'Student Example', student_email: 'student.example@rmuti.ac.th' };
@@ -76,7 +76,7 @@ test('demo enforces QR expiry, enrollment, session status and duplicate check-in
 });
 test('demo late attendance is assigned by session cutoff, not client choice', () => {
   const now = Date.now(); const store = seedDemo(now); store.sessions[0].status = 'OPEN';
-  const late = now + 11 * 60000; store.tokens.test = { session_id: 'demo-session', expires: late + 20000 };
+  const late = Date.parse(store.sessions[0].late_cutoff_time) + 1; store.tokens.test = { session_id: 'demo-session', expires: late + 20000 };
   assert.equal(demoCheckIn(store, 'test', 'DEMO001', late).attendance_status, 'LATE');
 });
 
@@ -169,6 +169,49 @@ test('approved leave scores once, preserves notes and separates QR time from man
   const summary = scoreSummary(enrollments, [{ id: 'round', start_time: new Date().toISOString() }], [...attendance, ...attendance]);
   assert.equal(summary.rows[0].total, 1); assert.deepEqual(summary.rows[0].notes, [`LEAVE_APPROVED: ${row.leave_note}`]);
   assert.ok(csvText([[row.leave_note]]).includes('Medical leave, approved\nSecond line'));
+});
+
+test('new rounds default to 15-minute on-time credit and 30-minute close, including previous-round templates', () => {
+  const now = Date.now();
+  for (const previous of [null, { start_time: new Date(now - 86400000).toISOString(), checkin_open_time: new Date(now - 86400000 - 300000).toISOString(), late_cutoff_time: new Date(now - 86400000 + 600000).toISOString() }]) {
+    const defaults = sessionDefaults(previous, now);
+    assert.equal(defaults.late_cutoff_time - defaults.start_time, 15 * 60000);
+    assert.equal(defaults.checkin_close_time - defaults.start_time, 30 * 60000);
+  }
+  const store = seedDemo(now); store.sessions[0].status = 'OPEN';
+  for (const [offset, score] of [[15 * 60000, 1], [15 * 60000 + 1, 0]]) {
+    store.attendance = []; store.tokens.test = { session_id: 'demo-session', expires: now + offset + 20000 };
+    assert.equal(attendanceScore(demoCheckIn(store, 'test', 'DEMO001', now + offset).attendance_status), score);
+  }
+});
+
+test('demo permanent deletion is acknowledged, resumable and preserves other courses and shared accounts', () => {
+  const original = globalThis.localStorage, values = new Map(), now = Date.now();
+  globalThis.localStorage = { getItem: key => values.get(key) || null, setItem: (key, value) => values.set(key, value) };
+  const call = (path, body) => demoApi(path, body, now, 'https://demo.invalid/');
+  try {
+    const store = seedDemo(now);
+    store.courses.push({ id: 'foreign', course_code: 'OTHER', active: true });
+    store.sections.push({ id: 'foreign-section', course_id: 'foreign' });
+    store.attendance.push({ section_id: 'foreign-section', student_id: 'DEMO001', attendance_status: 'ON_TIME' });
+    store.students = [{ student_id: 'DEMO001' }]; store.users = [{ uid: 'shared' }];
+    store.attendance_adjustments = [{ session_id: 'demo-session', section_id: 'demo-section', note: 'Approved leave' }];
+    values.set(DEMO_KEY, JSON.stringify(store));
+    const payload = { course_id: 'demo-course', confirmation: 'IOT101', backup_confirmed: true };
+    assert.throws(() => call('/api/purge-course', payload));
+    call('/api/archive-course', { course_id: 'demo-course' });
+    payload.expected_version = JSON.parse(values.get(DEMO_KEY)).courses[0].course_version;
+    assert.throws(() => call('/api/purge-course', { ...payload, backup_confirmed: false }));
+    let result = call('/api/purge-course', payload); payload.purge_id = result.purge_id;
+    assert.throws(() => call('/api/restore-course', { course_id: 'demo-course' }));
+    for (let i = 0; i < 10 && !result.done; i++) result = call('/api/purge-course', payload);
+    assert.equal(result.done, true); assert.deepEqual(call('/api/purge-course', payload), result);
+    const after = JSON.parse(values.get(DEMO_KEY));
+    assert.deepEqual(after.courses.map(row => row.id), ['foreign']);
+    assert.equal(after.sections[0].id, 'foreign-section'); assert.equal(after.attendance[0].section_id, 'foreign-section');
+    assert.equal(after.enrollments.length, 0); assert.equal(after.sessions.length, 0); assert.equal(after.attendance_adjustments.length, 0);
+    assert.deepEqual(after.students, store.students); assert.deepEqual(after.users, store.users);
+  } finally { if (original === undefined) delete globalThis.localStorage; else globalThis.localStorage = original; }
 });
 
 test('demo leave approval, note correction, revoke and course archive preserve original evidence', () => {

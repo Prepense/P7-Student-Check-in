@@ -67,6 +67,14 @@ export function orderedRoster(rows) {
 
 export const attendanceScore = (status) => ['ON_TIME', 'LEAVE_APPROVED'].includes(status) ? 1 : 0;
 
+export function sessionDefaults(previous, now = Date.now()) {
+  const anchor = new Date(now);
+  if (previous) { const start = new Date(previous.start_time); anchor.setHours(start.getHours(), start.getMinutes(), 0, 0); }
+  const start = previous ? anchor.getTime() : now;
+  return { checkin_open_time: start + (previous ? Date.parse(previous.checkin_open_time) - Date.parse(previous.start_time) : -60000),
+    start_time: start, late_cutoff_time: start + 15 * 60000, checkin_close_time: start + 30 * 60000 };
+}
+
 export function sessionStatus(row, now = Date.now()) {
   if (['OPEN', 'LATE'].includes(row.status) && now > Date.parse(row.checkin_close_time)) return 'CLOSED';
   return row.status;

@@ -2,7 +2,7 @@ import './style.css';
 import QRCode from 'qrcode';
 import { createIcons, GraduationCap, Settings, Plus, Play, Square, RefreshCw, Upload, Download, Search, QrCode, ExternalLink, Copy, X, CheckCircle, LogOut, CalendarDays, Users, ClipboardCheck, ArrowLeft, Camera, Trash2, RotateCcw, Usb, Pencil } from 'lucide';
 import { readSheet } from 'read-excel-file/browser';
-import { DOMAIN, validateStudents, sessionTimes, attendanceRows, attendanceScore, scoreSummary, sessionStatus, dateTimeFromParts, csvText, qrTokenFromText, escapeHtml as e } from './domain.js';
+import { DOMAIN, validateStudents, sessionTimes, sessionDefaults, attendanceRows, orderedRoster, attendanceScore, scoreSummary, sessionStatus, dateTimeFromParts, csvText, qrTokenFromText, escapeHtml as e } from './domain.js';
 import { api, loadConfig, connectFirebase, login, signup, verifyEmail, refreshAccount, logout, resetPassword } from './backend.js';
 import { DEMO_KEY, seedDemo } from './demo.js';
 import { mountQrScanner, closeQrScanner } from './scanner.js';
@@ -33,7 +33,7 @@ const options = (rows, selected, label) => rows.map((row) => `<option value="${e
 const session = () => state.sessions.find((row) => row.id === state.sessionId);
 const selectedSection = () => state.sections.find((row) => row.id === state.sectionId);
 const selectedCourse = () => state.courses.find((row) => row.id === state.courseId);
-const writableCourse = () => !!state.courseId && selectedCourse()?.active !== false;
+const writableCourse = () => !!state.courseId && selectedCourse()?.active !== false && selectedCourse()?.purge_state !== 'IN_PROGRESS';
 const writableSection = () => writableCourse() && !!state.sectionId && selectedSection()?.active !== false;
 const time = (value) => value ? new Date(value).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }) : '-';
 const date = (value) => value ? new Date(value).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' }) : '-';
@@ -119,12 +119,13 @@ function teacherView() {
   const late = rows.filter((row) => row.attendance_status === 'LATE').length;
   return `<section class="selectors" aria-label="รายวิชาและกลุ่มเรียน">
     <label>รายวิชา<select id="course" ${state.loading ? 'disabled' : ''}>${visibleCourses.length ? options(visibleCourses, state.courseId, (row) => `${row.course_code} · ${row.course_name}${row.active === false ? ' · ลบแล้ว' : ''}`) : '<option>ยังไม่มีรายวิชา</option>'}</select></label>
-    <div class="section-actions">${iconButton('new-course', 'Plus', 'เพิ่มรายวิชา')}${iconButton(selectedCourse()?.active === false ? 'restore-course' : 'archive-course', selectedCourse()?.active === false ? 'RotateCcw' : 'Trash2', selectedCourse()?.active === false ? 'คืนรายวิชา' : 'ลบรายวิชา', !state.courseId ? 'disabled' : '')}</div>
+    <div class="section-actions">${iconButton('new-course', 'Plus', 'เพิ่มรายวิชา')}${iconButton(selectedCourse()?.active === false ? 'restore-course' : 'archive-course', selectedCourse()?.active === false ? 'RotateCcw' : 'Trash2', selectedCourse()?.active === false ? 'คืนรายวิชา' : 'ลบรายวิชา', !state.courseId || selectedCourse()?.purge_state === 'IN_PROGRESS' ? 'disabled' : '')}</div>
     <label>กลุ่มเรียน<select id="section" ${state.loading ? 'disabled' : ''}>${visibleSections.length ? options(visibleSections, state.sectionId, (row) => `กลุ่ม ${row.section_code}${row.room ? ` · ${row.room}` : ''}${row.active === false ? ' · ลบแล้ว' : ''}`) : '<option>ยังไม่มีกลุ่มเรียน</option>'}</select></label>
     <div class="section-actions">${iconButton('new-section', 'Plus', 'เพิ่มกลุ่มเรียน', !writableCourse() ? 'disabled' : '')}
     ${iconButton(selectedSection()?.active === false ? 'restore-section' : 'archive-section', selectedSection()?.active === false ? 'RotateCcw' : 'Trash2', selectedSection()?.active === false ? 'คืนห้องเรียน' : 'ลบห้องเรียน', !state.sectionId ? 'disabled' : '')}</div>
   </section>
   <label class="archive-toggle"><input id="show-archived" type="checkbox" ${state.showArchived ? 'checked' : ''}>แสดงรายวิชาและห้องเรียนที่ลบ</label>
+  ${selectedCourse()?.active === false ? `<div class="archived-course-toolbar"><span class="muted">${selectedCourse().purge_state === 'IN_PROGRESS' ? `ลบแล้ว ${Number(selectedCourse().purge_deleted_count || 0)} รายการ · รอทำต่อ` : 'รายวิชาเก็บย้อนหลัง'}</span>${actionButton('purge-course', 'Trash2', selectedCourse().purge_state === 'IN_PROGRESS' ? 'ลบถาวรต่อ' : 'ลบรายวิชาถาวร', 'danger')}</div>` : ''}
   <div class="tabs" role="tablist"><button role="tab" aria-selected="${state.tab === 'attendance'}" data-action="tab-attendance">เช็คชื่อ</button><button role="tab" aria-selected="${state.tab === 'history'}" data-action="tab-history">รอบที่ผ่านมา <span>${state.sessions.length}</span></button></div>
   ${state.loading ? '<div class="loading" role="status">กำลังโหลดข้อมูล...</div>' : ''}
   ${state.tab === 'history' ? historyView() : `<section class="session-toolbar"><div><h2>${current ? date(current.start_time) : 'รอบเช็คชื่อ'}</h2><div class="session-meta">${current ? `เปิดรับ ${time(current.checkin_open_time)} · เริ่มเรียน ${time(current.start_time)} · เกณฑ์สาย ${time(current.late_cutoff_time)} · ปิดรับ ${time(current.checkin_close_time)}` : 'ยังไม่มีรอบเช็คชื่อ'} ${current ? badge(status) : ''}</div></div><div class="actions">
@@ -277,11 +278,9 @@ const localDateTime = (value) => { const d = new Date(value); return new Date(d.
 function sessionModal(existing = null) {
     const now = Date.now();
     const previous = session();
-    const anchor = new Date(now);
-    if (previous) { const start = new Date(previous.start_time); anchor.setHours(start.getHours(), start.getMinutes(), 0, 0); }
-    const defaults = { checkin_open_time: now - 60000, start_time: now, late_cutoff_time: now + 10 * 60000, checkin_close_time: now + 60 * 60000 };
+    const defaults = sessionDefaults(previous, now);
     const dateTimeField = (label, name) => {
-      const value = localDateTime(existing ? existing[name] : previous ? anchor.getTime() + Date.parse(previous[name]) - Date.parse(previous.start_time) : defaults[name]);
+      const value = localDateTime(existing ? existing[name] : defaults[name]);
       const list = (count, selected) => Array.from({ length: count }, (_, i) => { const text = String(i).padStart(2, '0'); return `<option value="${text}" ${text === selected ? 'selected' : ''}>${text}</option>`; }).join('');
       return `<fieldset class="date-time-field"><legend>${label}</legend><input type="date" name="${name}_date" value="${value.slice(0, 10)}" aria-label="${label} วันที่" required><div class="clock-fields"><select name="${name}_hour" aria-label="${label} ชั่วโมง">${list(24, value.slice(11, 13))}</select><span>:</span><select name="${name}_minute" aria-label="${label} นาที">${list(60, value.slice(14, 16))}</select></div></fieldset>`;
     };
@@ -296,6 +295,38 @@ function leaveModal(studentId) {
   const approved = row.attendance_status === 'LEAVE_APPROVED';
   showModal(approved ? 'แก้ไขการลา' : 'อนุมัติลา', `<form id="attendance-leave-form"><p><strong>${e(row.student_name)}</strong><br>${e(row.student_id)} · ${e(date(session().start_time))}</p><p>${approved ? 'ลาอนุมัติ' : e(row.attendance_status === 'LATE' ? 'สาย' : statusLabels[row.attendance_status])} · คะแนนหลังอนุมัติ 1 คะแนน</p><label>เหตุผล / หมายเหตุ<textarea name="note" rows="4" maxlength="1000" required>${e(row.leave_note)}</textarea></label>${approved ? '<button type="button" class="danger" data-action="revoke-leave">ยกเลิกอนุมัติลา</button>' : ''}${formFooter(approved ? 'บันทึกหมายเหตุ' : 'ยืนยันอนุมัติลา')}</form>`);
   modal.querySelector('form').dataset.snapshot = JSON.stringify({ session_id: state.sessionId, student_id: studentId, expected_version: row.attendance_version });
+}
+
+function purgeCourseModal() {
+  const course = selectedCourse();
+  if (!course || course.active !== false) return;
+  const resuming = course.purge_state === 'IN_PROGRESS';
+  showModal(resuming ? 'ทำการลบถาวรต่อ' : 'ลบรายวิชาถาวร', `<form id="purge-course-form"><p><strong>${e(course.course_code)} · ${e(course.course_name)}</strong></p><p class="alert">ลบทุกกลุ่มเรียน รายชื่อในวิชา รอบเช็คชื่อ คะแนน และหมายเหตุการลา คืนข้อมูลไม่ได้ บัญชีนักศึกษาสำหรับวิชาอื่นยังคงอยู่</p>${!resuming ? actionButton('export-course', 'Download', 'ส่งออกคะแนนและหมายเหตุทุกกลุ่ม') : '<p class="muted">การลบเริ่มแล้ว ไม่สามารถคืนรายวิชาได้</p>'}<label class="purge-backup"><input name="backup_confirmed" type="checkbox" required>ส่งออกคะแนนและหมายเหตุครบทุกกลุ่มเรียนแล้ว</label>${field('พิมพ์รหัสวิชาเพื่อยืนยัน', 'confirmation', '', 'text', 'autocomplete="off" spellcheck="false"')}<p id="purge-progress" class="muted" role="status"></p>${formFooter(resuming ? 'ยืนยันลบต่อ' : 'ยืนยันลบถาวร')}</form>`);
+  modal.querySelector('form').dataset.snapshot = JSON.stringify({ course_id: course.id, course_code: course.course_code,
+    expected_version: course.course_version, ...(resuming ? { purge_id: course.purge_id } : {}) });
+  modal.querySelector('button[type="submit"]').className = 'danger';
+}
+
+async function exportCourseBackup(snapshot) {
+  const { sections } = await api(state.mode, `/api/sections?course_id=${encodeURIComponent(snapshot.course_id)}`);
+  const rows = [['Course code', 'Section', 'Round ID', 'Date', 'Start time', 'Late cutoff', 'Close time', 'Student ID', 'Name', 'Email', 'Status', 'Check-in time', 'Score', 'Source', 'Leave note', 'Leave approved at']];
+  for (const section of sections) {
+    const data = await api(state.mode, `/api/section-data?section_id=${encodeURIComponent(section.id)}`);
+    for (const round of [...data.sessions].sort((a, b) => Date.parse(a.start_time) - Date.parse(b.start_time))) {
+      const { attendance } = await api(state.mode, `/api/attendance?session_id=${encodeURIComponent(round.id)}`);
+      const records = new Map(data.enrollments.map(row => [row.student_id, { ...row, attendance_status: 'PENDING' }]));
+      for (const row of attendance) records.set(row.student_id, { ...records.get(row.student_id), ...row });
+      for (const row of orderedRoster([...records.values()])) rows.push([snapshot.course_code, section.section_code, round.id, round.session_date,
+        round.start_time, round.late_cutoff_time, round.checkin_close_time, row.student_id, row.student_name, row.student_email,
+        row.attendance_status, row.checkin_time, attendanceScore(row.attendance_status), row.source, row.leave_note, row.leave_approved_at]);
+    }
+    // Keep enrollment-only sections in the export as well, even when no round was created.
+    if (!data.sessions.length) for (const row of orderedRoster(data.enrollments)) rows.push([snapshot.course_code, section.section_code, '', '', '', '', '', row.student_id, row.student_name, row.student_email, '', '', '', '', '', '']);
+  }
+  const { courses } = await api(state.mode, '/api/courses');
+  const current = courses.find(course => course.id === snapshot.course_id);
+  if (!current || current.purge_state === 'IN_PROGRESS' || current.course_version !== snapshot.expected_version) throw new Error('รายวิชาเปลี่ยนหรือเริ่มลบแล้ว กรุณาเปิดข้อมูลใหม่ก่อนส่งออก');
+  downloadCsv(rows, `course-${snapshot.course_id}-scores-and-notes.csv`);
 }
 
 function downloadCsv(rows, filename) {
@@ -353,6 +384,8 @@ async function handleAction(action, button) {
       modal.querySelector('form').dataset.courseId = state.courseId; return;
     }
     case 'restore-course': await api(state.mode, '/api/restore-course', { course_id: state.courseId }); await reload(); return;
+    case 'purge-course': purgeCourseModal(); return;
+    case 'export-course': await exportCourseBackup(JSON.parse(modal.querySelector('form').dataset.snapshot)); toast('ส่งออกคะแนนและหมายเหตุแล้ว'); return;
     case 'attendance-leave': leaveModal(button.dataset.id); return;
     case 'revoke-leave': {
       const snapshot = modal.querySelector('form').dataset.snapshot;
@@ -405,6 +438,34 @@ async function handleAction(action, button) {
 async function submit(form) {
   const data = Object.fromEntries(new FormData(form));
   switch (form.id) {
+    case 'purge-course-form': {
+      const snapshot = JSON.parse(form.dataset.snapshot);
+      if (data.confirmation.trim() !== snapshot.course_code || data.backup_confirmed !== 'on') throw new Error('กรุณายืนยันการส่งออกและพิมพ์รหัสวิชาให้ตรง');
+      const payload = { ...snapshot, confirmation: data.confirmation.trim(), backup_confirmed: true };
+      clearQr();
+      try {
+        for (let batch = 0; batch < 500; batch++) {
+          if (!modal.open) throw new Error('หน้าต่างยืนยันถูกปิด พักการลบไว้แล้ว');
+          const result = await api(state.mode, '/api/purge-course', payload);
+          payload.purge_id = result.purge_id;
+          form.dataset.snapshot = JSON.stringify({ ...snapshot, purge_id: result.purge_id });
+          form.querySelector('[data-action="export-course"]')?.remove();
+          form.querySelector('#purge-progress').textContent = `ลบแล้ว ${result.deleted_count} รายการ`;
+          if (result.done) { modal.close(); state.courseId = ''; state.sectionId = ''; state.sessionId = ''; await reload(); toast('ลบรายวิชาถาวรแล้ว'); return; }
+          await new Promise(resolve => setTimeout(resolve, 150));
+        }
+        throw new Error('พักการลบไว้ กรุณากดลบต่อเพื่อดำเนินการต่อ');
+      } catch (error) {
+        await reload();
+        const latest = state.courses.find(course => course.id === snapshot.course_id);
+        if (latest?.purge_id) {
+          form.dataset.snapshot = JSON.stringify({ ...snapshot, purge_id: latest.purge_id, expected_version: latest.course_version });
+          form.querySelector('[data-action="export-course"]')?.remove();
+        }
+        throw new Error(`การลบหยุดชั่วคราว: ${error.message} กดลบต่อได้ ข้อมูลที่ลบไปแล้วคืนไม่ได้`);
+      }
+      break;
+    }
     case 'archive-course-form': {
       await api(state.mode, '/api/archive-course', { course_id: form.dataset.courseId });
       state.showArchived = true; clearQr(); modal.close(); await reload(); toast('ลบรายวิชาแล้ว'); break;
@@ -491,7 +552,7 @@ async function perform(task, form) {
     buttons.forEach((button, i) => { button.disabled = disabled[i]; });
     const confirmImport = modal.querySelector('#confirm-import');
     if (confirmImport) confirmImport.disabled = !importRows.length || importRows.length > 200 || validateStudents(importRows, studentEmailDomain).some((row) => row.errors.length);
-    app.querySelectorAll('button').forEach((button) => { if (button.dataset.action && !['new-section', 'new-session', 'edit-session', 'attendance-leave', 'import', 'export', 'export-scores', 'archive-section', 'restore-section', 'archive-course', 'restore-course', 'start-session'].includes(button.dataset.action)) button.disabled = false; });
+    app.querySelectorAll('button').forEach((button) => { if (button.dataset.action && !['new-section', 'new-session', 'edit-session', 'attendance-leave', 'import', 'export', 'export-scores', 'archive-section', 'restore-section', 'archive-course', 'restore-course', 'purge-course', 'start-session'].includes(button.dataset.action)) button.disabled = false; });
     if (document.querySelector('main')?.getAttribute('aria-busy') === 'true') render();
     updateUsbStatus();
   }

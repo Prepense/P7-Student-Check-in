@@ -41,6 +41,11 @@ main { padding: 28px 32px; min-width: 0; max-width: 1540px; width: 100%; }
 .eyebrow { font: 13.2px Arial, sans-serif; color: #7d9082; margin-bottom: 4px; }
 .selectors { display: grid; grid-template-columns: minmax(200px, 1.2fr) 88px minmax(140px, .65fr) 88px; gap: 12px; align-items: end; max-width: 1040px; padding-bottom: 14px; }
 .section-actions { display: flex; gap: 8px; }
+.archived-course-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.purge-backup { display: flex; align-items: flex-start; gap: 10px; margin-top: 18px; }
+.purge-backup input { width: 18px; min-width: 18px; height: 18px; margin-top: 4px; }
+#purge-course-form > button { width: 100%; min-width: 0; white-space: normal; }
+#purge-course-form footer { flex-wrap: wrap; }
 .archive-toggle { display: flex; align-items: center; gap: 8px; margin-bottom: 18px; font-size: 15.84px; }
 .archive-toggle input { width: 16px; min-height: 16px; margin: 0; }
 .date-time-field { border: 0; padding: 0; margin: 0; min-width: 0; display: grid; gap: 8px; }
