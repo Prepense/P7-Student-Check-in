@@ -1,14 +1,15 @@
 import './style.css';
 import QRCode from 'qrcode';
-import { createIcons, GraduationCap, Settings, Plus, Play, Square, RefreshCw, Upload, Download, Search, QrCode, ExternalLink, Copy, X, CheckCircle, LogOut, CalendarDays, Users, ClipboardCheck, ArrowLeft, Camera, Trash2, RotateCcw, Usb, Pencil } from 'lucide';
+import { createIcons, GraduationCap, Settings, Plus, Play, Square, RefreshCw, Upload, Download, Search, QrCode, ExternalLink, Copy, X, CheckCircle, LogOut, CalendarDays, Users, ClipboardCheck, ArrowLeft, Camera, Trash2, RotateCcw, Usb, Pencil, PictureInPicture2 } from 'lucide';
 import { readSheet } from 'read-excel-file/browser';
-import { DOMAIN, validateStudents, sessionTimes, sessionDefaults, attendanceRows, orderedRoster, attendanceScore, scoreSummary, sessionStatus, dateTimeFromParts, csvText, qrTokenFromText, escapeHtml as e } from './domain.js';
+import { DOMAIN, validateStudents, sessionMinuteOffsets, sessionTimesFromMinutes, sessionDefaults, attendanceRows, orderedRoster, attendanceScore, scoreSummary, sessionStatus, csvText, qrTokenFromText, escapeHtml as e } from './domain.js';
 import { api, loadConfig, connectFirebase, login, signup, verifyEmail, refreshAccount, logout, resetPassword } from './backend.js';
 import { DEMO_KEY, seedDemo } from './demo.js';
 import { mountQrScanner, closeQrScanner } from './scanner.js';
 import { SerialBridge } from './serial-bridge.js';
+import { QrPresenter } from './qr-presenter.js';
 
-const icons = { GraduationCap, Settings, Plus, Play, Square, RefreshCw, Upload, Download, Search, QrCode, ExternalLink, Copy, X, CheckCircle, LogOut, CalendarDays, Users, ClipboardCheck, ArrowLeft, Camera, Trash2, RotateCcw, Usb, Pencil };
+const icons = { GraduationCap, Settings, Plus, Play, Square, RefreshCw, Upload, Download, Search, QrCode, ExternalLink, Copy, X, CheckCircle, LogOut, CalendarDays, Users, ClipboardCheck, ArrowLeft, Camera, Trash2, RotateCcw, Usb, Pencil, PictureInPicture2 };
 const app = document.querySelector('#app');
 const modal = document.querySelector('#modal');
 const initialUrl = new URL(location.href);
@@ -41,7 +42,28 @@ const statusLabels = { SCHEDULED: 'ยังไม่เปิด', OPEN: 'ก�
 const badge = (status) => `<span class="badge ${e(status.toLowerCase())}">${e(statusLabels[status] || (status === 'LATE' ? 'สาย' : status))}</span>`;
 const canTeach = () => state.mode === 'demo' || ['instructor', 'admin'].includes(state.user?.role);
 const usbBridge = new SerialBridge({ onChange: updateUsbStatus, onInterrupted: invalidateUsbQr, onRecovered: () => { invalidateUsbQr(); void refreshQr(); } });
-const qrRefreshAllowed = () => !document.hidden || usbBridge.connected;
+const qrPresenter = new QrPresenter({ onChange: () => {
+  updatePresenterButton();
+  if (!qrPresenter.isOpen && !qrPresenter.opening && document.hidden && !usbBridge.connected) clearQr();
+} });
+const qrRefreshAllowed = () => !document.hidden || usbBridge.connected || qrPresenter.isOpen;
+
+function presentationAllowed() { return canTeach() && state.view === 'teacher' && state.tab === 'attendance'; }
+
+function updatePresenterButton() {
+  const button = document.querySelector('[data-action="present-qr"]');
+  if (!button) return;
+  button.disabled = state.busy || state.loading || qrPresenter.opening || !writableSection() || !session() || session().active === false || !['OPEN', 'LATE'].includes(sessionStatus(session()));
+  button.setAttribute('aria-pressed', String(qrPresenter.isOpen));
+}
+
+function syncQrPresentation() {
+  if (!presentationAllowed()) { qrPresenter.update(null); qrPresenter.close(); return; }
+  const active = !state.loading && !state.error && writableSection() && session()?.active !== false && session() && ['OPEN', 'LATE'].includes(sessionStatus(session()));
+  qrPresenter.update(active && state.qr ? { url: state.qr.qr_url, deadline: state.qr.deadline } : null,
+    active ? 'กำลังรับ QR...' : 'ปิดรอบเช็คชื่อ');
+  updatePresenterButton();
+}
 
 function invalidateUsbQr() {
   clearQr();
@@ -148,6 +170,7 @@ function teacherView() {
   <div class="qr-frame"><canvas id="qr-canvas" width="320" height="320" hidden aria-label="QR code สำหรับเช็คชื่อ"></canvas><div id="qr-placeholder">${icon('QrCode')}<span>${current && writableSection() && ['OPEN', 'LATE'].includes(status) ? 'กำลังรับ QR...' : 'รอเปิดรอบเช็คชื่อ'}</span></div></div>
   <div class="qr-countdown"><span>QR VALID</span><strong id="qr-seconds">--</strong><span>วินาที</span></div><div class="qr-progress"><div id="qr-progress"></div></div>
   <p id="qr-status" class="muted qr-status" role="status">${state.mode === 'demo' ? 'QR ตัวอย่าง · อายุ 20 วินาที' : 'QR จาก Cloudflare Worker'}</p>
+  ${actionButton('present-qr', 'PictureInPicture2', 'เปิด QR ลอย', 'full qr-present-button', 'title="เปิดหน้าต่าง QR อยู่เหนือโปรแกรมอื่น"')}
   <div class="qr-actions">${iconButton('copy-qr', 'Copy', 'คัดลอกลิงก์ QR')}${iconButton('open-qr', 'ExternalLink', 'เปิดหน้ารับเช็คชื่อ')}${iconButton('refresh-qr', 'RefreshCw', 'รับ QR ใหม่')}</div>
   ${state.mode === 'live' ? `<div class="usb-controls">${actionButton('usb-connect', 'Usb', 'เชื่อมต่อ ESP32', 'full')}<p id="usb-status" class="muted" role="status"></p></div>` : ''}</aside></div>`}`;
 }
@@ -225,6 +248,7 @@ async function refreshQr() {
 }
 
 async function drawQr() {
+  syncQrPresentation();
   const canvas = document.querySelector('#qr-canvas');
   if (!canvas) return;
   const active = state.qr && state.qr.deadline > performance.now();
@@ -235,6 +259,7 @@ async function drawQr() {
 }
 
 function updateCountdown() {
+  syncQrPresentation();
   const node = document.querySelector('#qr-seconds'); if (!node) return;
   const seconds = Math.max(0, Math.ceil(((state.qr?.deadline || 0) - performance.now()) / 1000));
   node.textContent = state.qr ? String(seconds).padStart(2, '0') : '--';
@@ -285,12 +310,13 @@ function sessionModal(existing = null) {
     const now = Date.now();
     const previous = session();
     const defaults = sessionDefaults(previous, now);
+    const offsets = sessionMinuteOffsets(existing || defaults);
     const dateTimeField = (label, name) => {
       const value = localDateTime(existing ? existing[name] : defaults[name]);
       const list = (count, selected) => Array.from({ length: count }, (_, i) => { const text = String(i).padStart(2, '0'); return `<option value="${text}" ${text === selected ? 'selected' : ''}>${text}</option>`; }).join('');
       return `<fieldset class="date-time-field"><legend>${label}</legend><input type="date" name="${name}_date" value="${value.slice(0, 10)}" aria-label="${label} วันที่" required><div class="clock-fields"><select name="${name}_hour" aria-label="${label} ชั่วโมง">${list(24, value.slice(11, 13))}</select><span>:</span><select name="${name}_minute" aria-label="${label} นาที">${list(60, value.slice(14, 16))}</select></div></fieldset>`;
     };
-    showModal(existing ? 'แก้ไขรอบเช็คชื่อ' : 'เพิ่มรอบเช็คชื่อ', `<form id="${existing ? 'edit' : 'create'}-session-form"><div class="form-grid">${dateTimeField('เปิดรับเช็คชื่อ', 'checkin_open_time')}${dateTimeField('เริ่มเรียน', 'start_time')}${dateTimeField('เกณฑ์สาย', 'late_cutoff_time')}${dateTimeField('ปิดรับเช็คชื่อ', 'checkin_close_time')}</div>${existing ? '<p class="muted">ข้อมูลเช็คชื่อและคะแนนที่บันทึกแล้วจะไม่เปลี่ยน</p>' : ''}${formFooter(existing ? 'บันทึกการแก้ไข' : 'สร้างรอบเช็คชื่อ')}</form>`);
+    showModal(existing ? 'แก้ไขรอบเช็คชื่อ' : 'เพิ่มรอบเช็คชื่อ', `<form id="${existing ? 'edit' : 'create'}-session-form"><div class="form-grid">${dateTimeField('เปิดรับเช็คชื่อ', 'checkin_open_time')}${dateTimeField('เริ่มเรียน', 'start_time')}${field('เกณฑ์สายหลังเริ่มเรียน (นาที)', 'late_minutes', offsets.late_minutes, 'number', 'min="0" step="any" inputmode="decimal"')}${field('ปิดรับหลังเริ่มเรียน (นาที)', 'close_minutes', offsets.close_minutes, 'number', 'min="0" step="any" inputmode="decimal"')}</div>${existing ? '<p class="muted">ข้อมูลเช็คชื่อและคะแนนที่บันทึกแล้วจะไม่เปลี่ยน</p>' : ''}${formFooter(existing ? 'บันทึกการแก้ไข' : 'สร้างรอบเช็คชื่อ')}</form>`);
     if (existing) modal.querySelector('form').dataset.snapshot = JSON.stringify(existing);
 }
 
@@ -377,7 +403,7 @@ async function handleAction(action, button) {
     case 'scan-qr': scannerModal(); return;
     case 'teacher': state.view = 'teacher'; state.result = null; render(); if (canTeach()) await reload(); return;
     case 'student': state.view = 'student'; clearQr(); render(); return;
-    case 'logout': clearQr(); await usbBridge.disconnect(); if (closeQrScanner()) modal.close(); state.authMode = 'login'; state.verificationSentAt = 0; await logout(); return;
+    case 'logout': qrPresenter.close(); clearQr(); await usbBridge.disconnect(); if (closeQrScanner()) modal.close(); state.authMode = 'login'; state.verificationSentAt = 0; await logout(); return;
     case 'usb-connect': {
       if (state.mode !== 'live' || !canTeach()) return;
       if (usbBridge.wanted || usbBridge.connected) await usbBridge.disconnect();
@@ -415,6 +441,10 @@ async function handleAction(action, button) {
       showModal('ปิดรอบเช็คชื่อ', `<form id="close-session-form"><p>ยืนยันปิดรับเช็คชื่อของรอบ ${e(date(session()?.start_time))}?</p>${formFooter('ปิดรอบ')}</form>`); return;
     }
     case 'refresh-qr': await refreshQr(); return;
+    case 'present-qr': {
+      if (!presentationAllowed() || !writableSection() || !session() || session().active === false || !['OPEN', 'LATE'].includes(sessionStatus(session()))) return;
+      await qrPresenter.open(); syncQrPresentation(); if (!state.qr) await refreshQr(); return;
+    }
     case 'copy-qr': if (!state.qr || state.qr.deadline <= performance.now()) throw new Error('ยังไม่มี QR ที่ใช้งานได้'); await navigator.clipboard.writeText(state.qr.qr_url); toast('คัดลอกลิงก์แล้ว'); return;
     case 'open-qr': if (!state.qr || state.qr.deadline <= performance.now()) throw new Error('ยังไม่มี QR ที่ใช้งานได้'); window.open(state.qr.qr_url, '_blank', 'noopener,noreferrer'); return;
     case 'export': {
@@ -508,16 +538,12 @@ async function submit(form) {
     case 'create-course-form': { const result = await api(state.mode, '/api/create-course', data); modal.close(); await reload({ courseId: result.course_id }); break; }
     case 'create-section-form': { const result = await api(state.mode, '/api/create-section', { ...data, course_id: state.courseId }); modal.close(); await reload({ sectionId: result.section_id }); break; }
     case 'create-session-form': {
-      const times = Object.fromEntries(['checkin_open_time', 'start_time', 'late_cutoff_time', 'checkin_close_time'].map((name) => [name, dateTimeFromParts(data, name)]));
-      const result = await api(state.mode, '/api/create-session', { ...sessionTimes(times), section_id: state.sectionId, session_date: times.start_time.slice(0, 10) }); modal.close(); await reload({ sessionId: result.session_id }); break;
+      const times = sessionTimesFromMinutes(data);
+      const result = await api(state.mode, '/api/create-session', { ...times, section_id: state.sectionId, session_date: data.start_time_date }); modal.close(); await reload({ sessionId: result.session_id }); break;
     }
     case 'edit-session-form': {
       const original = JSON.parse(form.dataset.snapshot);
-      const values = Object.fromEntries(['checkin_open_time', 'start_time', 'late_cutoff_time', 'checkin_close_time'].map((name) => {
-        const value = dateTimeFromParts(data, name);
-        return [name, value === localDateTime(original[name]) ? original[name] : value];
-      }));
-      const times = sessionTimes(values);
+      const times = sessionTimesFromMinutes(data, original);
       const result = await api(state.mode, '/api/update-session', {
         ...times, session_id: original.id, expected_updated_at: original.updated_at || null,
         session_date: times.start_time === original.start_time ? original.session_date : data.start_time_date,
@@ -561,6 +587,7 @@ async function perform(task, form) {
     app.querySelectorAll('button').forEach((button) => { if (button.dataset.action && !['new-section', 'new-session', 'edit-session', 'attendance-leave', 'import', 'export', 'export-scores', 'archive-section', 'restore-section', 'archive-course', 'restore-course', 'purge-course', 'start-session'].includes(button.dataset.action)) button.disabled = false; });
     if (document.querySelector('main')?.getAttribute('aria-busy') === 'true') render();
     updateUsbStatus();
+    updatePresenterButton();
   }
 }
 
@@ -575,7 +602,7 @@ document.addEventListener('input', (event) => {
 document.addEventListener('change', (event) => {
   const input = event.target;
   if (input.id === 'mode') perform(async () => {
-    state.generation++; state.mode = input.value; localStorage.setItem('checkin-mode', state.mode); state.result = null; clearQr();
+    qrPresenter.close(); state.generation++; state.mode = input.value; localStorage.setItem('checkin-mode', state.mode); state.result = null; clearQr();
     Object.assign(state, { courses: [], sections: [], sessions: [], enrollments: [], attendance: [], courseId: '', sectionId: '', sessionId: '', error: '' });
     if (state.mode === 'demo' && canTeach() && state.view === 'teacher') await reload(); else { render(); await setupLive(); }
   });
@@ -644,10 +671,10 @@ modal.addEventListener('cancel', closeQrScanner);
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
     // An open USB relay continues serving the room while the teacher uses another tab.
-    if (!usbBridge.connected) clearQr();
+    if (!usbBridge.connected && !qrPresenter.isOpen) clearQr();
     if (closeQrScanner()) modal.close();
   } else { syncUsbQr(); usbBridge.resume(); void refreshQr(); }
 });
-window.addEventListener('pagehide', () => { closeQrScanner(); clearQr(); void usbBridge.disconnect(); });
+window.addEventListener('pagehide', () => { qrPresenter.close(); closeQrScanner(); clearQr(); void usbBridge.disconnect(); });
 render();
 if (state.mode === 'demo' && state.view === 'teacher') reload(); else setupLive().catch((error) => toast(error.message, true));

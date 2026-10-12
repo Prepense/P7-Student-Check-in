@@ -1,9 +1,28 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { validateStudents, sessionTimes, sessionDefaults, attendanceRows, attendanceScore, scoreSummary, sessionStatus, dateTimeFromParts, csvText, qrTokenFromText, escapeHtml } from '../src/domain.js';
+import { validateStudents, sessionTimes, sessionDefaults, sessionMinuteOffsets, sessionTimesFromMinutes, attendanceRows, attendanceScore, scoreSummary, sessionStatus, dateTimeFromParts, csvText, qrTokenFromText, escapeHtml } from '../src/domain.js';
 import { demoApi, demoCheckIn, seedDemo, DEMO_KEY } from '../src/demo.js';
 
 const student = { student_id: 'DEMO-001', student_name: 'Student Example', student_email: 'student.example@rmuti.ac.th' };
+test('minute thresholds follow the start, cross midnight and retain untouched legacy seconds', () => {
+  const data = { checkin_open_time_date: '2026-10-12', checkin_open_time_hour: '23', checkin_open_time_minute: '30',
+    start_time_date: '2026-10-12', start_time_hour: '23', start_time_minute: '50', late_minutes: '15', close_minutes: '30' };
+  const times = sessionTimesFromMinutes(data);
+  assert.deepEqual(sessionMinuteOffsets(times), { late_minutes: 15, close_minutes: 30 });
+  assert.equal(new Date(times.late_cutoff_time).getDate(), 13);
+  assert.equal(new Date(times.checkin_close_time).getHours(), 0);
+  assert.equal(new Date(times.checkin_close_time).getMinutes(), 20);
+  const original = { ...times, start_time: new Date(Date.parse(times.start_time) + 12345).toISOString(),
+    checkin_open_time: new Date(Date.parse(times.checkin_open_time) + 54321).toISOString() };
+  const offsets = sessionMinuteOffsets(original);
+  assert.deepEqual(sessionTimesFromMinutes({ ...data, ...offsets }, original), original);
+  const changed = sessionTimesFromMinutes({ ...data, ...offsets, start_time_minute: '55' }, original);
+  assert.equal(Date.parse(changed.late_cutoff_time) - Date.parse(changed.start_time), Math.round(offsets.late_minutes * 60000));
+  for (const bad of ['', '-1', 'NaN', 'Infinity', '1e5', '1,5']) assert.throws(() => sessionTimesFromMinutes({ ...data, late_minutes: bad }));
+  assert.throws(() => sessionTimesFromMinutes({ ...data, late_minutes: '31' }), /ลำดับเวลา/);
+  assert.throws(() => sessionTimesFromMinutes({ ...data, close_minutes: '9'.repeat(300) }), /มากเกินไป/);
+  assert.deepEqual(sessionMinuteOffsets(sessionTimesFromMinutes({ ...data, late_minutes: '0', close_minutes: '0' })), { late_minutes: 0, close_minutes: 0 });
+});
 test('QR parsing preserves every case-sensitive token byte through links and paste', () => {
   const token = `eYj_-ABCdef.${'a_B-cDe'.repeat(6)}X`;
   const url = new URL('https://prepense.github.io/P7-Student-Check-in/'); url.searchParams.set('t', token);

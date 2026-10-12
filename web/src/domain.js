@@ -47,6 +47,31 @@ export function sessionTimes(data) {
   return Object.fromEntries(fields.map((field, i) => [field, new Date(values[i]).toISOString()]));
 }
 
+export function sessionMinuteOffsets(row) {
+  const start = new Date(row.start_time).getTime();
+  return { late_minutes: (new Date(row.late_cutoff_time).getTime() - start) / 60000,
+    close_minutes: (new Date(row.checkin_close_time).getTime() - start) / 60000 };
+}
+
+export function sessionTimesFromMinutes(data, original = null) {
+  const values = Object.fromEntries(['checkin_open_time', 'start_time'].map((name) => {
+    const value = dateTimeFromParts(data, name);
+    const old = original && new Date(original[name]);
+    return [name, old && Date.parse(value) === old.setSeconds(0, 0) ? original[name] : value];
+  }));
+  const previous = original && sessionMinuteOffsets(original);
+  for (const [field, input] of [['late_cutoff_time', 'late_minutes'], ['checkin_close_time', 'close_minutes']]) {
+    const text = String(data[input] ?? '').trim();
+    const minutes = Number(text);
+    if (!/^\d+(?:\.\d+)?$/.test(text) || !Number.isFinite(minutes) || minutes < 0) throw new Error('เกณฑ์สายและปิดรับต้องเป็นจำนวนนาทีตั้งแต่ 0 ขึ้นไป');
+    const deadline = new Date(Date.parse(values.start_time) + Math.round(minutes * 60000));
+    if (!Number.isFinite(deadline.getTime())) throw new Error('จำนวนนาทีมากเกินไป');
+    values[field] = previous && values.start_time === original.start_time && minutes === previous[input]
+      ? original[field] : deadline.toISOString();
+  }
+  return sessionTimes(values);
+}
+
 export function attendanceRows(enrollments, attendance) {
   const byId = new Map(attendance.map((row) => [row.student_id, row]));
   return orderedRoster(enrollments.filter((row) => row.status === 'ACTIVE')).map((row) => ({
