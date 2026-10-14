@@ -36,3 +36,35 @@ test('ineligible views, lease interruption and arbitrary URLs fail closed', () =
     f.bridge.update({ url, deadline: 10000 }, false); assert.equal(f.bridge.connected, false); assert.equal(f.posted.at(-1).type, 'notebook-close');
   } finally { f.bridge.disconnect(); }
 });
+
+test('missing ticks do not leave a healthy status and recovery requires a fresh QR', () => {
+  const f = fixture(); try {
+    f.receive('notebook-connected'); f.bridge.update({ url, deadline: 20000 });
+    f.receive('notebook-tick', { status: { clientAlive: true, state: 'active', displays: ['fixture'] } });
+    f.advance(5100); f.bridge.checkHealth();
+    assert.equal(f.bridge.recovering, true); assert.equal(f.bridge.target, null);
+    assert.equal(f.bridge.status, null); assert.match(f.bridge.error, /กู้คืน/);
+    assert.equal(f.posted.at(-1).type, 'notebook-resume');
+    f.bridge.checkHealth(); assert.equal(f.counts().interrupted, 1);
+    f.receive('notebook-tick', { status: { clientAlive: false, state: 'usb_lost' } });
+    assert.equal(f.counts().recovered, 2); assert.equal(f.posted.at(-1).frame.url, null);
+    f.receive('notebook-tick', { status: { clientAlive: false, state: 'usb_lost' } });
+    assert.equal(f.counts().recovered, 2, 'Do not invalidate an in-flight QR every tick');
+    const fresh = url.replace('synthetic_payload', 'fresh_payload');
+    f.bridge.update({ url: fresh, deadline: 25000 });
+    f.receive('notebook-tick', { status: { clientAlive: true, state: 'active' } });
+    assert.equal(f.bridge.recovering, false); assert.equal(f.bridge.error, '');
+    assert.equal(f.posted.at(-1).frame.url, fresh);
+  } finally { f.bridge.disconnect(); }
+});
+
+test('a stalled or revoked popup clears stale display status without prompting for a new grant', () => {
+  const f = fixture(); try {
+    f.receive('notebook-connected'); f.bridge.update({ url, deadline: 20000 });
+    f.receive('notebook-stalled'); f.receive('notebook-stalled');
+    assert.equal(f.counts().interrupted, 1); assert.equal(f.bridge.recovering, true);
+    f.receive('notebook-disconnected');
+    assert.equal(f.bridge.connected, false); assert.equal(f.bridge.status, null);
+    assert.match(f.bridge.error, /อนุญาตใหม่/);
+  } finally { f.bridge.disconnect(); }
+});
