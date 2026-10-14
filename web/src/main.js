@@ -126,7 +126,6 @@ function render() {
     <div class="brand-block">
       <a class="brand" href="${e(location.pathname)}">${icon('GraduationCap')}<span>Student Check-in<small>ระบบเช็คชื่อเข้าเรียน</small></span></a>
       <div class="brand-credit" aria-label="เจ้าของระบบ"><span class="brand-owner">พิฆเนศ อุปชัย</span><span class="brand-affiliation">Applied Physics, RMUTI</span></div>
-      <span class="app-version" title="เวอร์ชันเว็บไซต์" aria-label="เวอร์ชันเว็บไซต์ ${e(appVersion)}">v${e(appVersion)}</span>
     </div>
     <div class="top-actions"><label class="mode-label"><span class="sr-only">โหมด</span><select id="mode"><option value="demo" ${state.mode === 'demo' ? 'selected' : ''}>ข้อมูลตัวอย่าง</option><option value="live" ${state.mode === 'live' ? 'selected' : ''}>ระบบจริง</option></select></label>
     ${iconButton('settings', 'Settings', 'ตั้งค่าการเชื่อมต่อ')}${state.user ? iconButton('logout', 'LogOut', 'ออกจากระบบ') : ''}</div>
@@ -134,12 +133,12 @@ function render() {
   <div class="workspace"><aside class="sidebar"><nav aria-label="มุมมอง">
     <button class="nav-item ${state.view === 'teacher' ? 'active' : ''}" data-action="teacher">${icon('ClipboardCheck')}ผู้สอน</button>
     <button class="nav-item ${state.view === 'student' ? 'active' : ''}" data-action="student">${icon('QrCode')}นักศึกษา</button>
-  </nav><div class="sidebar-bottom"><span class="connection-dot ${state.mode === 'demo' ? 'demo' : ''}"></span>${state.mode === 'demo' ? 'ตัวอย่าง · ไม่บันทึกบนคลาวด์' : 'Firebase + Workers'}<small>${e(state.user?.email || (state.mode === 'demo' ? 'Demo workspace' : 'ยังไม่เข้าสู่ระบบ'))}</small></div></aside>
+  </nav></aside>
   <main aria-busy="${state.busy || state.loading}">
     <div class="page-heading"><div class="eyebrow">${state.mode === 'demo' ? 'DEMO WORKSPACE' : 'CLASSROOM WORKSPACE'}</div><h1>${state.view === 'teacher' ? 'เช็คชื่อเข้าเรียน' : 'เช็คชื่อของฉัน'}</h1></div>
     ${state.error ? `<div class="alert" role="alert">${e(state.error)}</div>` : ''}
     ${state.mode === 'live' && !state.user ? authView() : state.view === 'teacher' ? (canTeach() ? teacherView() : '<div class="empty">บัญชีนี้ไม่มีสิทธิ์ผู้สอน กรุณาเปิดมุมมองนักศึกษา</div>') : studentView()}
-  </main></div>`;
+  </main><footer class="sidebar-bottom"><span class="connection-dot ${state.mode === 'demo' ? 'demo' : ''}"></span>${state.mode === 'demo' ? 'ตัวอย่าง · ไม่บันทึกบนคลาวด์' : 'Firebase + Workers'}<small class="account-email">${e(state.user?.email || (state.mode === 'demo' ? 'Demo workspace' : 'ยังไม่เข้าสู่ระบบ'))}</small><span class="app-version" title="เวอร์ชันเว็บไซต์" aria-label="เวอร์ชันเว็บไซต์ ${e(appVersion)}">v${e(appVersion)}</span></footer></div>`;
   createIcons({ icons });
   drawQr();
   syncUsbQr(); updateUsbStatus(); syncNotebookQr(); updateNotebookStatus();
@@ -201,7 +200,7 @@ function teacherView() {
   <p id="qr-status" class="muted qr-status" role="status">${state.mode === 'demo' ? 'QR ตัวอย่าง · อายุ 20 วินาที' : 'QR จาก Cloudflare Worker'}</p>
   ${actionButton('present-qr', 'PictureInPicture2', 'เปิด QR ลอย', 'full qr-present-button', 'title="เปิดหน้าต่าง QR อยู่เหนือโปรแกรมอื่น"')}
   <div class="qr-actions">${iconButton('copy-qr', 'Copy', 'คัดลอกลิงก์ QR')}${iconButton('open-qr', 'ExternalLink', 'เปิดหน้ารับเช็คชื่อ')}${iconButton('refresh-qr', 'RefreshCw', 'รับ QR ใหม่')}</div>
-  ${state.mode === 'live' ? `<div class="usb-controls">${actionButton('notebook-connect', 'Wifi', 'เชื่อมต่อผ่าน hotspot', 'full')}<p id="notebook-status" class="muted" role="status"></p>${actionButton('usb-connect', 'Usb', 'เชื่อมต่อ ESP32', 'full')}<p id="usb-status" class="muted" role="status"></p></div>` : ''}</aside></div>`}`;
+  ${state.mode === 'live' ? `<div class="usb-controls">${actionButton('notebook-connect', 'Wifi', 'เชื่อมต่อผ่าน hotspot', 'full')}<p id="notebook-status" class="muted" role="status"></p></div>` : ''}</aside></div>`}`;
 }
 
 function rosterBody() {
@@ -325,7 +324,9 @@ function settingsModal() {
   showModal('ตั้งค่าการเชื่อมต่อ', `<form id="settings-form">
     ${field('Cloudflare Worker URL', 'workerUrl', config.workerUrl || '', 'url', 'placeholder="https://student-check-in-api.example.workers.dev"')}
     <label>Firebase Web config (JSON)<textarea name="firebase" rows="8" spellcheck="false" required>${e(JSON.stringify(config.firebase || { apiKey: '', authDomain: 'student-check-in-rmuti.firebaseapp.com', projectId: 'student-check-in-rmuti', appId: '' }, null, 2))}</textarea></label>
-    <p class="muted">เฉพาะ Web config สาธารณะ · ไม่ใส่ service account หรือ signing secret</p>${formFooter('บันทึก')}</form>`);
+    <p class="muted">เฉพาะ Web config สาธารณะ · ไม่ใส่ service account หรือ signing secret</p>${formFooter('บันทึก')}</form>
+    ${state.mode === 'live' && state.user && canTeach() ? `<details class="usb-fallback"><summary>ESP32 host สำรอง</summary>${actionButton('usb-connect', 'Usb', 'เชื่อมต่อ ESP32', 'full', 'type="button"')}<p id="usb-status" class="muted" role="status"></p></details>` : ''}`);
+  updateUsbStatus();
 }
 
 function creationModal(type) {
