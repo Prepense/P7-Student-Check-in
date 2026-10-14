@@ -1,7 +1,7 @@
 import './style.css';
 import { version as appVersion } from '../package.json';
 import QRCode from 'qrcode';
-import { createIcons, GraduationCap, Settings, Plus, Play, Square, RefreshCw, Upload, Download, Search, QrCode, ExternalLink, Copy, X, CheckCircle, LogOut, CalendarDays, Users, ClipboardCheck, ArrowLeft, Camera, Trash2, RotateCcw, Usb, Pencil, PictureInPicture2 } from 'lucide';
+import { createIcons, GraduationCap, Settings, Plus, Play, Square, RefreshCw, Upload, Download, Search, QrCode, ExternalLink, Copy, X, CheckCircle, LogOut, CalendarDays, Users, ClipboardCheck, ArrowLeft, Camera, Trash2, RotateCcw, Usb, Wifi, Pencil, PictureInPicture2 } from 'lucide';
 import { readSheet } from 'read-excel-file/browser';
 import { DOMAIN, validateStudents, sessionMinuteOffsets, sessionTimesFromMinutes, sessionDefaults, attendanceRows, orderedRoster, attendanceScore, scoreSummary, sessionStatus, csvText, qrTokenFromText, escapeHtml as e } from './domain.js';
 import { api, loadConfig, connectFirebase, login, signup, verifyEmail, refreshAccount, logout, resetPassword } from './backend.js';
@@ -9,8 +9,9 @@ import { DEMO_KEY, seedDemo } from './demo.js';
 import { mountQrScanner, closeQrScanner } from './scanner.js';
 import { SerialBridge } from './serial-bridge.js';
 import { QrPresenter } from './qr-presenter.js';
+import { NotebookBridge } from './notebook-bridge.js';
 
-const icons = { GraduationCap, Settings, Plus, Play, Square, RefreshCw, Upload, Download, Search, QrCode, ExternalLink, Copy, X, CheckCircle, LogOut, CalendarDays, Users, ClipboardCheck, ArrowLeft, Camera, Trash2, RotateCcw, Usb, Pencil, PictureInPicture2 };
+const icons = { GraduationCap, Settings, Plus, Play, Square, RefreshCw, Upload, Download, Search, QrCode, ExternalLink, Copy, X, CheckCircle, LogOut, CalendarDays, Users, ClipboardCheck, ArrowLeft, Camera, Trash2, RotateCcw, Usb, Wifi, Pencil, PictureInPicture2 };
 const app = document.querySelector('#app');
 const modal = document.querySelector('#modal');
 const initialUrl = new URL(location.href);
@@ -43,11 +44,34 @@ const statusLabels = { SCHEDULED: 'ยังไม่เปิด', OPEN: 'ก�
 const badge = (status) => `<span class="badge ${e(status.toLowerCase())}">${e(statusLabels[status] || (status === 'LATE' ? 'สาย' : status))}</span>`;
 const canTeach = () => state.mode === 'demo' || ['instructor', 'admin'].includes(state.user?.role);
 const usbBridge = new SerialBridge({ onChange: updateUsbStatus, onInterrupted: invalidateUsbQr, onRecovered: () => { invalidateUsbQr(); void refreshQr(); } });
+const notebookBridge = new NotebookBridge({ onChange: updateNotebookStatus, onInterrupted: invalidateUsbQr,
+  onRecovered: () => { invalidateUsbQr(); void refreshQr(); }, onTick: () => {
+    syncNotebookQr();
+    if (state.nextQr && performance.now() >= state.nextQr && !state.busy) void refreshQr();
+  } });
 const qrPresenter = new QrPresenter({ onChange: () => {
   updatePresenterButton();
-  if (!qrPresenter.isOpen && !qrPresenter.opening && document.hidden && !usbBridge.connected) clearQr();
+  if (!qrPresenter.isOpen && !qrPresenter.opening && document.hidden && !usbBridge.connected && !notebookBridge.connected) clearQr();
 } });
-const qrRefreshAllowed = () => !document.hidden || usbBridge.connected || qrPresenter.isOpen;
+const qrRefreshAllowed = () => !document.hidden || usbBridge.connected || notebookBridge.connected || qrPresenter.isOpen;
+
+function updateNotebookStatus() {
+  const button = document.querySelector('[data-action="notebook-connect"]');
+  const node = document.querySelector('#notebook-status');
+  if (!button || !node) return;
+  button.disabled = state.busy || state.loading;
+  button.querySelector('span').textContent = notebookBridge.connected || notebookBridge.connecting ? 'ตัดการเชื่อมต่อ hotspot' : 'เชื่อมต่อผ่าน hotspot';
+  const count = notebookBridge.status?.displays?.length || 0;
+  node.textContent = notebookBridge.error || (notebookBridge.connecting ? 'รออนุญาตเชื่อมเว็บไซต์' : notebookBridge.connected ? `Hotspot เชื่อมต่อแล้ว · ${count ? `Display ${count} เครื่อง` : 'รอ Display'}` : 'Hotspot ยังไม่เชื่อมต่อ');
+}
+
+function syncNotebookQr() {
+  const enabled = state.mode === 'live' && !!state.user && canTeach() && state.view === 'teacher' && state.tab === 'attendance';
+  const current = session();
+  const active = enabled && !state.loading && !state.error && writableSection() && current?.active !== false && current && ['OPEN', 'LATE'].includes(sessionStatus(current));
+  notebookBridge.update(active && state.qr ? { url: state.qr.qr_url, deadline: state.qr.deadline } : null, enabled);
+  if (!enabled && (notebookBridge.connected || notebookBridge.connecting)) notebookBridge.disconnect();
+}
 
 function presentationAllowed() { return canTeach() && state.view === 'teacher' && state.tab === 'attendance'; }
 
@@ -118,7 +142,7 @@ function render() {
   </main></div>`;
   createIcons({ icons });
   drawQr();
-  syncUsbQr(); updateUsbStatus();
+  syncUsbQr(); updateUsbStatus(); syncNotebookQr(); updateNotebookStatus();
   if (state.busy) app.querySelectorAll('button, select').forEach((node) => { node.disabled = true; });
 }
 
@@ -177,7 +201,7 @@ function teacherView() {
   <p id="qr-status" class="muted qr-status" role="status">${state.mode === 'demo' ? 'QR ตัวอย่าง · อายุ 20 วินาที' : 'QR จาก Cloudflare Worker'}</p>
   ${actionButton('present-qr', 'PictureInPicture2', 'เปิด QR ลอย', 'full qr-present-button', 'title="เปิดหน้าต่าง QR อยู่เหนือโปรแกรมอื่น"')}
   <div class="qr-actions">${iconButton('copy-qr', 'Copy', 'คัดลอกลิงก์ QR')}${iconButton('open-qr', 'ExternalLink', 'เปิดหน้ารับเช็คชื่อ')}${iconButton('refresh-qr', 'RefreshCw', 'รับ QR ใหม่')}</div>
-  ${state.mode === 'live' ? `<div class="usb-controls">${actionButton('usb-connect', 'Usb', 'เชื่อมต่อ ESP32', 'full')}<p id="usb-status" class="muted" role="status"></p></div>` : ''}</aside></div>`}`;
+  ${state.mode === 'live' ? `<div class="usb-controls">${actionButton('notebook-connect', 'Wifi', 'เชื่อมต่อผ่าน hotspot', 'full')}<p id="notebook-status" class="muted" role="status"></p>${actionButton('usb-connect', 'Usb', 'เชื่อมต่อ ESP32', 'full')}<p id="usb-status" class="muted" role="status"></p></div>` : ''}</aside></div>`}`;
 }
 
 function rosterBody() {
@@ -229,7 +253,7 @@ async function reload(preferred = {}) {
   if (generation === state.generation) { state.loading = false; render(); await refreshQr(); }
 }
 
-function clearQr() { state.qr = null; state.nextQr = 0; state.qrEpoch++; syncUsbQr(); void drawQr(); }
+function clearQr() { state.qr = null; state.nextQr = 0; state.qrEpoch++; syncUsbQr(); syncNotebookQr(); void drawQr(); }
 
 async function refreshQr() {
   const current = session();
@@ -244,7 +268,7 @@ async function refreshQr() {
     // Anchoring to request start avoids extending validity by network latency.
     state.qr = { ...issued, deadline: requestStarted + Math.max(0, Date.parse(issued.expires_at) - Date.parse(issued.issued_at)) };
     state.nextQr = performance.now() + issued.refresh_after_seconds * 1000;
-    syncUsbQr();
+    syncUsbQr(); syncNotebookQr();
     await drawQr();
     const node = document.querySelector('#qr-status'); if (node) node.textContent = state.mode === 'demo' ? 'QR ตัวอย่าง · อายุ 20 วินาที' : `TOKEN · ${issued.token_id}`;
   } catch (error) {
@@ -408,11 +432,17 @@ async function handleAction(action, button) {
     case 'scan-qr': scannerModal(); return;
     case 'teacher': state.view = 'teacher'; state.result = null; render(); if (canTeach()) await reload(); return;
     case 'student': state.view = 'student'; clearQr(); render(); return;
-    case 'logout': qrPresenter.close(); clearQr(); await usbBridge.disconnect(); if (closeQrScanner()) modal.close(); state.authMode = 'login'; state.verificationSentAt = 0; await logout(); return;
+    case 'logout': qrPresenter.close(); clearQr(); notebookBridge.disconnect(); await usbBridge.disconnect(); if (closeQrScanner()) modal.close(); state.authMode = 'login'; state.verificationSentAt = 0; await logout(); return;
+    case 'notebook-connect': {
+      if (state.mode !== 'live' || !state.user || !canTeach()) throw new Error('ต้องเข้าสู่ระบบผู้สอนก่อน');
+      if (notebookBridge.connected || notebookBridge.connecting) notebookBridge.disconnect();
+      else { notebookBridge.connect(); await usbBridge.disconnect(); syncNotebookQr(); }
+      return;
+    }
     case 'usb-connect': {
       if (state.mode !== 'live' || !canTeach()) return;
       if (usbBridge.wanted || usbBridge.connected) await usbBridge.disconnect();
-      else { await usbBridge.connect(); syncUsbQr(); if (usbBridge.connected && !state.qr) await refreshQr(); }
+      else { notebookBridge.disconnect(); await usbBridge.connect(); syncUsbQr(); if (usbBridge.connected && !state.qr) await refreshQr(); }
       updateUsbStatus(); return;
     }
     case 'new-course': creationModal('course'); return;
@@ -648,6 +678,7 @@ let sessionClockKey = '';
 setInterval(() => {
   updateCountdown();
   syncUsbQr();
+  syncNotebookQr();
   const current = session();
   if (state.view === 'teacher' && current && !state.busy && !state.loading) {
     const now = Date.now();
@@ -676,10 +707,10 @@ modal.addEventListener('cancel', closeQrScanner);
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
     // An open USB relay continues serving the room while the teacher uses another tab.
-    if (!usbBridge.connected && !qrPresenter.isOpen) clearQr();
+    if (!usbBridge.connected && !notebookBridge.connected && !qrPresenter.isOpen) clearQr();
     if (closeQrScanner()) modal.close();
   } else { syncUsbQr(); usbBridge.resume(); void refreshQr(); }
 });
-window.addEventListener('pagehide', () => { qrPresenter.close(); closeQrScanner(); clearQr(); void usbBridge.disconnect(); });
+window.addEventListener('pagehide', () => { qrPresenter.close(); closeQrScanner(); clearQr(); notebookBridge.disconnect(); void usbBridge.disconnect(); });
 render();
 if (state.mode === 'demo' && state.view === 'teacher') reload(); else setupLive().catch((error) => toast(error.message, true));
