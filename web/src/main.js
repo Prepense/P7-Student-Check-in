@@ -1,4 +1,5 @@
 import './style.css';
+import { version as appVersion } from '../package.json';
 import QRCode from 'qrcode';
 import { createIcons, GraduationCap, Settings, Plus, Play, Square, RefreshCw, Upload, Download, Search, QrCode, ExternalLink, Copy, X, CheckCircle, LogOut, CalendarDays, Users, ClipboardCheck, ArrowLeft, Camera, Trash2, RotateCcw, Usb, Pencil, PictureInPicture2 } from 'lucide';
 import { readSheet } from 'read-excel-file/browser';
@@ -98,7 +99,11 @@ function toast(message, error = false) {
 
 function render() {
   app.innerHTML = `<header class="topbar">
-    <a class="brand" href="${e(location.pathname)}">${icon('GraduationCap')}<span>Student Check-in<small>ระบบเช็คชื่อเข้าเรียน</small></span></a>
+    <div class="brand-block">
+      <a class="brand" href="${e(location.pathname)}">${icon('GraduationCap')}<span>Student Check-in<small>ระบบเช็คชื่อเข้าเรียน</small></span></a>
+      <div class="brand-credit" aria-label="เจ้าของระบบ"><span class="brand-owner">พิฆเนศ อุปชัย</span><span class="brand-affiliation">Applied Physics, RMUTI</span></div>
+      <span class="app-version" title="เวอร์ชันเว็บไซต์" aria-label="เวอร์ชันเว็บไซต์ ${e(appVersion)}">v${e(appVersion)}</span>
+    </div>
     <div class="top-actions"><label class="mode-label"><span class="sr-only">โหมด</span><select id="mode"><option value="demo" ${state.mode === 'demo' ? 'selected' : ''}>ข้อมูลตัวอย่าง</option><option value="live" ${state.mode === 'live' ? 'selected' : ''}>ระบบจริง</option></select></label>
     ${iconButton('settings', 'Settings', 'ตั้งค่าการเชื่อมต่อ')}${state.user ? iconButton('logout', 'LogOut', 'ออกจากระบบ') : ''}</div>
   </header>
