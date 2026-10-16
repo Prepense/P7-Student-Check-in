@@ -3,7 +3,7 @@ import { version as appVersion } from '../package.json';
 import QRCode from 'qrcode';
 import { createIcons, GraduationCap, Settings, Plus, Play, Square, RefreshCw, Upload, Download, Search, QrCode, ExternalLink, Copy, X, CheckCircle, LogOut, CalendarDays, Users, ClipboardCheck, ArrowLeft, Camera, Trash2, RotateCcw, Usb, Wifi, Pencil, PictureInPicture2 } from 'lucide';
 import { readSheet } from 'read-excel-file/browser';
-import { DOMAIN, validateStudents, sessionMinuteOffsets, sessionTimesFromMinutes, sessionDefaults, attendanceRows, orderedRoster, attendanceScore, scoreSummary, sessionStatus, csvText, qrTokenFromText, escapeHtml as e } from './domain.js';
+import { DOMAIN, navigationViews, validateStudents, sessionMinuteOffsets, sessionTimesFromMinutes, sessionDefaults, attendanceRows, orderedRoster, attendanceScore, scoreSummary, sessionStatus, csvText, qrTokenFromText, escapeHtml as e } from './domain.js';
 import { api, loadConfig, connectFirebase, login, signup, verifyEmail, refreshAccount, logout, resetPassword } from './backend.js';
 import { DEMO_KEY, seedDemo } from './demo.js';
 import { mountQrScanner, closeQrScanner } from './scanner.js';
@@ -132,6 +132,8 @@ function toast(message, error = false) {
 }
 
 function render() {
+  const views = navigationViews(state.mode, state.user);
+  if (!views.includes(state.view)) state.view = views[0];
   app.innerHTML = `<header class="topbar">
     <div class="brand-block">
       <a class="brand" href="${e(location.pathname)}">${icon('GraduationCap')}<span>Student Check-in<small>ระบบเช็คชื่อเข้าเรียน</small></span></a>
@@ -141,8 +143,8 @@ function render() {
     ${iconButton('settings', 'Settings', 'ตั้งค่าการเชื่อมต่อ')}${state.user ? iconButton('logout', 'LogOut', 'ออกจากระบบ') : ''}</div>
   </header>
   <div class="workspace"><aside class="sidebar"><nav aria-label="มุมมอง">
-    <button class="nav-item ${state.view === 'teacher' ? 'active' : ''}" data-action="teacher">${icon('ClipboardCheck')}ผู้สอน</button>
-    <button class="nav-item ${state.view === 'student' ? 'active' : ''}" data-action="student">${icon('QrCode')}นักศึกษา</button>
+    ${views.includes('teacher') ? `<button class="nav-item ${state.view === 'teacher' ? 'active' : ''}" data-action="teacher">${icon('ClipboardCheck')}ผู้สอน</button>` : ''}
+    ${views.includes('student') ? `<button class="nav-item ${state.view === 'student' ? 'active' : ''}" data-action="student">${icon('QrCode')}นักศึกษา</button>` : ''}
   </nav></aside>
   <main aria-busy="${state.busy || state.loading}">
     <div class="page-heading"><div class="eyebrow">${state.mode === 'demo' ? 'DEMO WORKSPACE' : 'CLASSROOM WORKSPACE'}</div><h1>${state.view === 'teacher' ? 'เช็คชื่อเข้าเรียน' : 'เช็คชื่อของฉัน'}</h1></div>
@@ -440,6 +442,7 @@ function updateImport() {
 }
 
 async function handleAction(action, button) {
+  if (['teacher', 'student'].includes(action) && !navigationViews(state.mode, state.user).includes(action)) return;
   if (action.startsWith('leave-')) return leaveUI.action(action, button);
   switch (action) {
     case 'auth-login': state.authMode = 'login'; render(); return;
@@ -691,7 +694,7 @@ async function setupLive() {
     if (state.mode !== 'live') return;
     leaveUI.reset(); modal.close(); state.user = user; clearQr();
     if (closeQrScanner()) modal.close();
-    if (user && !['instructor', 'admin'].includes(user.role)) state.view = 'student';
+    if (user) state.view = navigationViews(state.mode, user)[0];
     if (!user) { state.result = null; state.error = ''; state.generation++; }
     render();
     if (user && canTeach() && state.view === 'teacher') await reload();

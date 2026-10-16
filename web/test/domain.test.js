@@ -1,9 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { validateStudents, sessionTimes, sessionDefaults, sessionMinuteOffsets, sessionTimesFromMinutes, attendanceRows, attendanceScore, scoreSummary, sessionStatus, dateTimeFromParts, csvText, qrTokenFromText, escapeHtml } from '../src/domain.js';
+import { navigationViews, validateStudents, sessionTimes, sessionDefaults, sessionMinuteOffsets, sessionTimesFromMinutes, attendanceRows, attendanceScore, scoreSummary, sessionStatus, dateTimeFromParts, csvText, qrTokenFromText, escapeHtml } from '../src/domain.js';
 import { demoApi, demoCheckIn, seedDemo, DEMO_KEY } from '../src/demo.js';
 
 const student = { student_id: 'DEMO-001', student_name: 'Student Example', student_email: 'student.example@rmuti.ac.th' };
+test('live navigation shows both views before login and only the account role after login', () => {
+  assert.deepEqual(navigationViews('live', null), ['teacher', 'student']);
+  for (const role of ['instructor', 'admin']) assert.deepEqual(navigationViews('live', { role }), ['teacher']);
+  for (const role of ['student', null, undefined, 'unknown']) assert.deepEqual(navigationViews('live', { role }), ['student']);
+  assert.deepEqual(navigationViews('live', { role: null, email_verified: false }), ['student']);
+  for (const user of [null, { role: 'student' }, { role: 'instructor' }]) assert.deepEqual(navigationViews('demo', user), ['teacher', 'student']);
+});
 test('minute thresholds follow the start, cross midnight and retain untouched legacy seconds', () => {
   const data = { checkin_open_time_date: '2026-10-12', checkin_open_time_hour: '23', checkin_open_time_minute: '30',
     start_time_date: '2026-10-12', start_time_hour: '23', start_time_minute: '50', late_minutes: '15', close_minutes: '30' };

@@ -1,5 +1,10 @@
 export const DOMAIN = 'rmuti.ac.th';
 
+export function navigationViews(mode, user) {
+  if (mode === 'demo' || !user) return ['teacher', 'student'];
+  return ['instructor', 'admin'].includes(user.role) ? ['teacher'] : ['student'];
+}
+
 export function qrTokenFromText(value, allowDemo = false) {
   let token = String(value ?? '').trim();
   if (/^https?:\/\//i.test(token)) {
