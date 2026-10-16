@@ -10,6 +10,7 @@ import { mountQrScanner, closeQrScanner } from './scanner.js';
 import { SerialBridge } from './serial-bridge.js';
 import { QrPresenter } from './qr-presenter.js';
 import { NotebookBridge } from './notebook-bridge.js';
+import { createLeaveUI } from './leave-requests.js';
 
 const icons = { GraduationCap, Settings, Plus, Play, Square, RefreshCw, Upload, Download, Search, QrCode, ExternalLink, Copy, X, CheckCircle, LogOut, CalendarDays, Users, ClipboardCheck, ArrowLeft, Camera, Trash2, RotateCcw, Usb, Wifi, Pencil, PictureInPicture2 };
 const app = document.querySelector('#app');
@@ -54,6 +55,15 @@ const qrPresenter = new QrPresenter({ onChange: () => {
   if (!qrPresenter.isOpen && !qrPresenter.opening && document.hidden && !usbBridge.connected && !notebookBridge.connected) clearQr();
 } });
 const qrRefreshAllowed = () => !document.hidden || usbBridge.connected || notebookBridge.connected || qrPresenter.isOpen;
+const leaveUI = createLeaveUI({ api, mode: () => state.mode, studentId: () => state.mode === 'demo' ? state.studentId : state.user?.student_id || '',
+  sectionId: () => state.sectionId, sessionId: () => state.sessionId, modal, showModal, render, toast,
+  onReviewed: async () => {
+    const generation = state.generation, id = state.sessionId;
+    if (id) {
+      const result = await api(state.mode, `/api/attendance?session_id=${encodeURIComponent(id)}`);
+      if (generation === state.generation && state.sessionId === id) { state.attendance = result.attendance; render(); }
+    }
+  } });
 
 function updateNotebookStatus() {
   const button = document.querySelector('[data-action="notebook-connect"]');
@@ -191,7 +201,7 @@ function teacherView() {
   </div></section>
   <div class="attendance-layout"><section class="register"><div class="stats">
     <div><span>รายชื่อทั้งหมด</span><strong>${rows.length}<small> คน</small></strong></div><div><span>เช็คชื่อแล้ว</span><strong class="green">${present}<small> คน</small></strong></div><div><span>มาสาย</span><strong class="amber">${late}<small> คน</small></strong></div><div><span>ลาอนุมัติ</span><strong>${leave}<small> คน</small></strong></div><div><span>ยังไม่เช็คชื่อ</span><strong>${rows.length - present - leave}<small> คน</small></strong></div>
-  </div><div class="register-toolbar"><h2>รายชื่อนักศึกษา</h2><div class="actions">${actionButton('import', 'Upload', 'นำเข้า Excel', '', !writableSection() ? 'disabled' : '')}${iconButton('export', 'Download', 'ดาวน์โหลด CSV', !rows.length ? 'disabled' : '')}${iconButton('refresh', 'RefreshCw', 'รีเฟรชข้อมูล')}</div></div>
+  </div><div class="register-toolbar"><h2>รายชื่อนักศึกษา</h2><div class="actions">${actionButton('leave-teacher', 'ClipboardCheck', 'คำขอลา', '', !state.sectionId ? 'disabled' : '')}${actionButton('import', 'Upload', 'นำเข้า Excel', '', !writableSection() ? 'disabled' : '')}${iconButton('export', 'Download', 'ดาวน์โหลด CSV', !rows.length ? 'disabled' : '')}${iconButton('refresh', 'RefreshCw', 'รีเฟรชข้อมูล')}</div></div>
   <div class="filters"><label class="search">${icon('Search')}<input id="search" placeholder="ค้นหารหัส ชื่อ หรืออีเมล" aria-label="ค้นหานักศึกษา" value="${e(state.search)}"></label><select id="filter" aria-label="กรองสถานะ"><option value="ALL">ทุกสถานะ</option><option value="ON_TIME" ${state.filter === 'ON_TIME' ? 'selected' : ''}>ตรงเวลา</option><option value="LATE" ${state.filter === 'LATE' ? 'selected' : ''}>สาย</option><option value="LEAVE_APPROVED" ${state.filter === 'LEAVE_APPROVED' ? 'selected' : ''}>ลาอนุมัติ</option><option value="PENDING" ${state.filter === 'PENDING' ? 'selected' : ''}>ยังไม่เช็คชื่อ</option></select></div>
   <div class="table-scroll"><table class="roster-table"><thead><tr><th>นักศึกษา</th><th>สถานะ / หมายเหตุ</th><th>เวลาเช็คชื่อ</th><th>การลา</th></tr></thead><tbody id="roster-body">${rosterBody()}</tbody></table></div><div class="table-footer"><span id="row-count"></span><span>ปรับปรุงล่าสุด <span id="updated-time">${state.loaded ? time(Date.now()) : '-'}</span></span></div>
   </section><aside class="qr-panel"><div class="qr-heading"><h2>${icon('QrCode')} QR เช็คชื่อ</h2>${current ? badge(status) : ''}</div>
@@ -224,9 +234,11 @@ function studentView() {
   return `<section class="student-surface"><div class="student-heading">${icon('Users')}<h2>${state.mode === 'demo' ? 'บัญชีนักศึกษาตัวอย่าง' : e(state.user?.email)}</h2></div>
   ${state.mode === 'demo' ? `<label>นักศึกษา<select id="demo-student">${unique.map((row) => `<option value="${e(row.student_id)}" ${row.student_id === state.studentId ? 'selected' : ''}>${e(row.student_id)} · ${e(row.student_name)}</option>`).join('')}</select></label>` : `<p class="muted">รหัสนักศึกษา ${e(state.user?.student_id || 'ยังไม่ได้ผูกบัญชี')}</p>`}
   ${state.mode === 'live' && state.user?.student_name ? `<p>${e(state.user.student_name)}</p>` : ''}
-  ${state.result ? `<div class="checkin-result" role="status">${icon('CheckCircle')}<h3>${state.result.result === 'ALREADY_CHECKED_IN' ? 'เช็คชื่อไว้แล้ว' : 'เช็คชื่อสำเร็จ'}</h3><strong>${e(state.result.course_code || '')} · กลุ่ม ${e(state.result.section_code || '')}</strong><p>${date(state.result.checkin_time)} · ${time(state.result.checkin_time)}</p>${state.result.attendance_status === 'LATE' ? '<span class="badge late">สาย</span>' : badge(state.result.attendance_status)}</div>` : ''}
+  ${leaveUI.studentView()}
+  ${!leaveUI.active ? `${state.result ? `<div class="checkin-result" role="status">${icon('CheckCircle')}<h3>${state.result.result === 'ALREADY_CHECKED_IN' ? 'เช็คชื่อไว้แล้ว' : 'เช็คชื่อสำเร็จ'}</h3><strong>${e(state.result.course_code || '')} · กลุ่ม ${e(state.result.section_code || '')}</strong><p>${date(state.result.checkin_time)} · ${time(state.result.checkin_time)}</p>${state.result.attendance_status === 'LATE' ? '<span class="badge late">สาย</span>' : badge(state.result.attendance_status)}</div>` : ''}
   ${actionButton('scan-qr', 'Camera', 'สแกน QR', 'scan-button full')}
   ${state.token ? `<form id="checkin-form"><button class="primary full" type="submit">${icon('ClipboardCheck')}ยืนยันเช็คชื่อ</button></form>` : ''}
+  ` : ''}
   <div class="student-footer">${state.mode === 'demo' ? 'ข้อมูลตัวอย่าง · ไม่บันทึกการเข้าเรียนจริง' : 'บันทึกผ่าน Cloudflare Worker'}</div></section>`;
 }
 
@@ -296,6 +308,7 @@ function updateCountdown() {
 }
 
 function showModal(title, content, wide = false) {
+  leaveUI.closePreview();
   closeQrScanner();
   modal.className = wide ? 'wide' : '';
   modal.innerHTML = `<div class="modal-heading"><h2>${title}</h2>${iconButton('dismiss', 'X', 'ปิด')}</div>${content}`;
@@ -363,7 +376,7 @@ function purgeCourseModal() {
   const course = selectedCourse();
   if (!course || course.active !== false) return;
   const resuming = course.purge_state === 'IN_PROGRESS';
-  showModal(resuming ? 'ทำการลบถาวรต่อ' : 'ลบรายวิชาถาวร', `<form id="purge-course-form"><p><strong>${e(course.course_code)} · ${e(course.course_name)}</strong></p><p class="alert">ลบทุกกลุ่มเรียน รายชื่อในวิชา รอบเช็คชื่อ คะแนน และหมายเหตุการลา คืนข้อมูลไม่ได้ บัญชีนักศึกษาสำหรับวิชาอื่นยังคงอยู่</p>${!resuming ? actionButton('export-course', 'Download', 'ส่งออกคะแนนและหมายเหตุทุกกลุ่ม') : '<p class="muted">การลบเริ่มแล้ว ไม่สามารถคืนรายวิชาได้</p>'}<label class="purge-backup"><input name="backup_confirmed" type="checkbox" required>ส่งออกคะแนนและหมายเหตุครบทุกกลุ่มเรียนแล้ว</label>${field('พิมพ์รหัสวิชาเพื่อยืนยัน', 'confirmation', '', 'text', 'autocomplete="off" spellcheck="false"')}<p id="purge-progress" class="muted" role="status"></p>${formFooter(resuming ? 'ยืนยันลบต่อ' : 'ยืนยันลบถาวร')}</form>`);
+  showModal(resuming ? 'ทำการลบถาวรต่อ' : 'ลบรายวิชาถาวร', `<form id="purge-course-form"><p><strong>${e(course.course_code)} · ${e(course.course_name)}</strong></p><p class="alert">ลบทุกกลุ่มเรียน รายชื่อในวิชา รอบเช็คชื่อ คะแนน หมายเหตุ คำขอและไฟล์หลักฐานการลา คืนข้อมูลไม่ได้ ไฟล์ CSV ไม่รวมรูปถ่าย บัญชีนักศึกษาสำหรับวิชาอื่นยังคงอยู่</p>${!resuming ? actionButton('export-course', 'Download', 'ส่งออกคะแนนและหมายเหตุทุกกลุ่ม') : '<p class="muted">การลบเริ่มแล้ว ไม่สามารถคืนรายวิชาได้</p>'}<label class="purge-backup"><input name="backup_confirmed" type="checkbox" required>ส่งออกคะแนนและหมายเหตุครบทุกกลุ่มเรียนแล้ว</label>${field('พิมพ์รหัสวิชาเพื่อยืนยัน', 'confirmation', '', 'text', 'autocomplete="off" spellcheck="false"')}<p id="purge-progress" class="muted" role="status"></p>${formFooter(resuming ? 'ยืนยันลบต่อ' : 'ยืนยันลบถาวร')}</form>`);
   modal.querySelector('form').dataset.snapshot = JSON.stringify({ course_id: course.id, course_code: course.course_code,
     expected_version: course.course_version, ...(resuming ? { purge_id: course.purge_id } : {}) });
   modal.querySelector('button[type="submit"]').className = 'danger';
@@ -371,16 +384,23 @@ function purgeCourseModal() {
 
 async function exportCourseBackup(snapshot) {
   const { sections } = await api(state.mode, `/api/sections?course_id=${encodeURIComponent(snapshot.course_id)}`);
-  const rows = [['Course code', 'Section', 'Round ID', 'Date', 'Start time', 'Late cutoff', 'Close time', 'Student ID', 'Name', 'Email', 'Status', 'Check-in time', 'Score', 'Source', 'Leave note', 'Leave approved at']];
+  const rows = [['Course code', 'Section', 'Round ID', 'Date', 'Start time', 'Late cutoff', 'Close time', 'Student ID', 'Name', 'Email', 'Status', 'Check-in time', 'Score', 'Source', 'Leave note', 'Leave approved at', 'Leave request status', 'Student leave reason', 'Reviewer note', 'Paper received', 'Evidence due', 'Evidence photos']];
   for (const section of sections) {
     const data = await api(state.mode, `/api/section-data?section_id=${encodeURIComponent(section.id)}`);
+    const { requests } = await api(state.mode, `/api/leave-data?section_id=${encodeURIComponent(section.id)}`);
     for (const round of [...data.sessions].sort((a, b) => Date.parse(a.start_time) - Date.parse(b.start_time))) {
       const { attendance } = await api(state.mode, `/api/attendance?session_id=${encodeURIComponent(round.id)}`);
       const records = new Map(data.enrollments.map(row => [row.student_id, { ...row, attendance_status: 'PENDING' }]));
       for (const row of attendance) records.set(row.student_id, { ...records.get(row.student_id), ...row });
-      for (const row of orderedRoster([...records.values()])) rows.push([snapshot.course_code, section.section_code, round.id, round.session_date,
+      const leaves = new Map(requests.filter(row => row.session_id === round.id).map(row => [row.student_id, row]));
+      for (const row of leaves.values()) if (!records.has(row.student_id)) records.set(row.student_id, { student_id: row.student_id, student_name: row.student_name, student_email: row.student_email, attendance_status: 'PENDING' });
+      for (const row of orderedRoster([...records.values()])) {
+        const leave = leaves.get(row.student_id);
+        rows.push([snapshot.course_code, section.section_code, round.id, round.session_date,
         round.start_time, round.late_cutoff_time, round.checkin_close_time, row.student_id, row.student_name, row.student_email,
-        row.attendance_status, row.checkin_time, attendanceScore(row.attendance_status), row.source, row.leave_note, row.leave_approved_at]);
+        row.attendance_status, row.checkin_time, attendanceScore(row.attendance_status), row.source, row.leave_note, row.leave_approved_at,
+        leave?.status, leave?.reason, leave?.reviewer_note, leave ? (leave.paper_received ? 'YES' : 'NO') : '', leave?.evidence_due_at, leave?.attachments?.length]);
+      }
     }
     // Keep enrollment-only sections in the export as well, even when no round was created.
     if (!data.sessions.length) for (const row of orderedRoster(data.enrollments)) rows.push([snapshot.course_code, section.section_code, '', '', '', '', '', row.student_id, row.student_name, row.student_email, '', '', '', '', '', '']);
@@ -420,6 +440,7 @@ function updateImport() {
 }
 
 async function handleAction(action, button) {
+  if (action.startsWith('leave-')) return leaveUI.action(action, button);
   switch (action) {
     case 'auth-login': state.authMode = 'login'; render(); return;
     case 'auth-signup': state.authMode = 'signup'; state.view = 'student'; render(); return;
@@ -433,7 +454,7 @@ async function handleAction(action, button) {
     case 'scan-qr': scannerModal(); return;
     case 'teacher': state.view = 'teacher'; state.result = null; render(); if (canTeach()) await reload(); return;
     case 'student': state.view = 'student'; clearQr(); render(); return;
-    case 'logout': qrPresenter.close(); clearQr(); notebookBridge.disconnect(); await usbBridge.disconnect(); if (closeQrScanner()) modal.close(); state.authMode = 'login'; state.verificationSentAt = 0; await logout(); return;
+    case 'logout': qrPresenter.close(); clearQr(); notebookBridge.disconnect(); await usbBridge.disconnect(); closeQrScanner(); modal.close(); leaveUI.reset(); state.authMode = 'login'; state.verificationSentAt = 0; await logout(); return;
     case 'notebook-connect': {
       if (state.mode !== 'live' || !state.user || !canTeach()) throw new Error('ต้องเข้าสู่ระบบผู้สอนก่อน');
       if (notebookBridge.connected || notebookBridge.connecting) notebookBridge.disconnect();
@@ -454,7 +475,7 @@ async function handleAction(action, button) {
     case 'restore-course': await api(state.mode, '/api/restore-course', { course_id: state.courseId }); await reload(); return;
     case 'purge-course': purgeCourseModal(); return;
     case 'export-course': await exportCourseBackup(JSON.parse(modal.querySelector('form').dataset.snapshot)); toast('ส่งออกคะแนนและหมายเหตุแล้ว'); return;
-    case 'attendance-leave': leaveModal(button.dataset.id); return;
+    case 'attendance-leave': if (!await leaveUI.openForStudent(button.dataset.id)) leaveModal(button.dataset.id); return;
     case 'revoke-leave': {
       const snapshot = modal.querySelector('form').dataset.snapshot;
       showModal('ยกเลิกอนุมัติลา', `<form id="revoke-leave-form"><p>ยืนยันยกเลิกอนุมัติลาและคืนสถานะกับคะแนนเดิมของนักศึกษารายนี้?</p>${formFooter('ยืนยันยกเลิกอนุมัติลา')}</form>`);
@@ -508,6 +529,7 @@ async function handleAction(action, button) {
 }
 
 async function submit(form) {
+  if (form.id.startsWith('leave-')) return leaveUI.submit(form);
   const data = Object.fromEntries(new FormData(form));
   switch (form.id) {
     case 'purge-course-form': {
@@ -637,8 +659,9 @@ document.addEventListener('input', (event) => {
 });
 document.addEventListener('change', (event) => {
   const input = event.target;
+  leaveUI.change(input);
   if (input.id === 'mode') perform(async () => {
-    qrPresenter.close(); state.generation++; state.mode = input.value; localStorage.setItem('checkin-mode', state.mode); state.result = null; clearQr();
+    leaveUI.reset(); qrPresenter.close(); state.generation++; state.mode = input.value; localStorage.setItem('checkin-mode', state.mode); state.result = null; clearQr();
     Object.assign(state, { courses: [], sections: [], sessions: [], enrollments: [], attendance: [], courseId: '', sectionId: '', sessionId: '', error: '' });
     if (state.mode === 'demo' && canTeach() && state.view === 'teacher') await reload(); else { render(); await setupLive(); }
   });
@@ -646,7 +669,7 @@ document.addEventListener('change', (event) => {
   if (input.id === 'section') perform(() => reload({ sectionId: input.value }));
   if (input.id === 'show-archived') perform(() => { state.showArchived = input.checked; return reload(); });
   if (input.id === 'filter') { state.filter = input.value; document.querySelector('#roster-body').innerHTML = rosterBody(); }
-  if (input.id === 'demo-student') { state.studentId = input.value; state.result = null; render(); }
+  if (input.id === 'demo-student') { leaveUI.reset(); state.studentId = input.value; state.result = null; render(); }
   if (input.dataset.map) mapImport();
   if (input.dataset.row) { importRows[Number(input.dataset.row)][input.dataset.field] = input.value; updateImport(); }
   if (input.id === 'excel-file') perform(async () => {
@@ -666,7 +689,7 @@ async function setupLive() {
   if (state.mode !== 'live' || !state.config.firebase?.apiKey || !state.config.workerUrl) return;
   await connectFirebase(state.config, async (user) => {
     if (state.mode !== 'live') return;
-    state.user = user; clearQr();
+    leaveUI.reset(); modal.close(); state.user = user; clearQr();
     if (closeQrScanner()) modal.close();
     if (user && !['instructor', 'admin'].includes(user.role)) state.view = 'student';
     if (!user) { state.result = null; state.error = ''; state.generation++; }
@@ -703,7 +726,7 @@ window.addEventListener('storage', (event) => {
     if (store) { state.attendance = store.attendance.filter((row) => row.session_id === state.sessionId); render(); }
   }
 });
-modal.addEventListener('close', () => { if (!modal.open) closeQrScanner(); });
+modal.addEventListener('close', () => { if (!modal.open) { closeQrScanner(); leaveUI.closePreview(); } });
 modal.addEventListener('cancel', closeQrScanner);
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {

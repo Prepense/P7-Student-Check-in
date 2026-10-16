@@ -71,10 +71,11 @@ export async function api(mode, path, body) {
   if (!auth?.currentUser || !config?.workerUrl) throw new Error('กรุณาตั้งค่า Firebase และเข้าสู่ระบบก่อน');
   const response = await fetch(`${config.workerUrl.replace(/\/$/, '')}${path}`, {
     method: body ? 'POST' : 'GET',
-    headers: { authorization: `Bearer ${await auth.currentUser.getIdToken()}`, 'content-type': 'application/json' },
-    body: body ? JSON.stringify(body) : undefined,
+    headers: { authorization: `Bearer ${await auth.currentUser.getIdToken()}`, 'content-type': body instanceof Blob ? 'image/jpeg' : 'application/json' },
+    body: body ? (body instanceof Blob ? body : JSON.stringify(body)) : undefined,
     signal: AbortSignal.timeout(20000),
   });
+  if (response.ok && path.startsWith('/api/leave-file?')) return { blob: await response.blob() };
   const result = await response.json();
   if (!response.ok) {
     const messages = { QR_TOKEN_EXPIRED: 'QR หมดอายุ กรุณาสแกนใหม่', TOKEN_EXPIRED: 'QR หมดอายุ กรุณาสแกนใหม่',
@@ -90,6 +91,19 @@ export async function api(mode, path, body) {
       SESSION_CHANGED: 'รอบนี้ถูกแก้ไขแล้ว กรุณาปิดหน้าต่าง รีเฟรชข้อมูล แล้วแก้ไขอีกครั้ง',
       SESSION_INACTIVE: 'รอบนี้ถูกยกเลิกแล้ว ไม่สามารถแก้ไขได้',
       OPEN_SESSION_FUTURE_WINDOW: 'กรุณาปิดรอบก่อนเปลี่ยนเวลาเปิดรับไปเป็นเวลาในอนาคต',
+      LEAVE_CHANGED: 'คำขอลาเปลี่ยนแล้ว กรุณาปิดหน้าต่างและรีเฟรชก่อนพิจารณาอีกครั้ง',
+      LEAVE_ALREADY_EXISTS: 'ส่งคำขอลาในรอบนี้แล้ว กรุณาเปิดรายละเอียดคำขอเดิม',
+      SESSION_NOT_OPEN: 'รอบนี้ไม่ได้เปิดรับอยู่ กรุณารีเฟรชข้อมูล',
+      LEAVE_LOCKED: 'คำขอนี้ล็อกการแก้ไขแล้ว กรุณาติดต่อผู้สอน',
+      EVIDENCE_OVERDUE: 'เกินกำหนดแนบหลักฐาน กรุณาขอขยายเวลาจากผู้สอน',
+      EVIDENCE_NOT_READY: 'หลักฐานยังไม่พร้อม กรุณารอสักครู่แล้วเปิดอีกครั้ง',
+      EVIDENCE_UNAVAILABLE: 'ยังไม่เปิดใช้งานที่เก็บหลักฐาน กรุณาติดต่อผู้สอน',
+      EVIDENCE_WRITE_FAILED: 'ที่เก็บหลักฐานขัดข้องหรือโควตาฟรีเต็ม คำขอลายังอยู่ กรุณาลองใหม่ภายหลัง',
+      EVIDENCE_UPLOAD_LIMIT: 'แนบหรือเปลี่ยนรูปในคำขอนี้ครบ 10 ครั้งแล้ว กรุณาติดต่อผู้สอน',
+      INVALID_EVIDENCE: 'กรุณาใช้รูปถ่าย JPEG ขนาดไม่เกิน 500 KB และด้านยาวไม่เกิน 2048 พิกเซล',
+      ATTENDANCE_CHANGED: 'ข้อมูลเช็คชื่อเปลี่ยนแล้ว กรุณาปิดหน้าต่างและเปิดคำขอใหม่',
+      LEAVE_NOT_READY: 'ต้องมีหลักฐานและสถานะรอพิจารณาก่อนอนุมัติ',
+      USE_LEAVE_REQUEST: 'นักศึกษาส่งคำขอแล้ว กรุณาพิจารณาจากปุ่มคำขอลา',
     });
     throw new Error(messages[result.error] || result.message || `HTTP ${response.status}`);
   }

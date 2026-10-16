@@ -1,4 +1,5 @@
 import { DOMAIN, sessionTimes, validateStudents } from './domain.js';
+import { demoLeave } from './leave-demo.js';
 
 export const DEMO_KEY = 'student-check-in-demo-v1';
 const fail = (message) => { throw new Error(message); };
@@ -45,6 +46,9 @@ export function demoApi(path, data = {}, now = Date.now(), base = location.href,
   const store = JSON.parse(localStorage.getItem(DEMO_KEY) || 'null') || seedDemo(now);
   const save = () => localStorage.setItem(DEMO_KEY, JSON.stringify(store));
   const url = new URL(path, 'https://demo.invalid');
+  if (url.pathname.startsWith('/api/leave-')) {
+    const result = demoLeave(store, url, data, now); save(); return result;
+  }
   const sectionId = url.searchParams.get('section_id');
   let result;
   const protectedPaths = ['/api/create-session', '/api/update-session', '/api/start-session', '/api/close-session', '/api/import-enrollments', '/api/issue-qr-token', '/api/attendance-leave', '/api/archive-section', '/api/restore-section'];
@@ -82,7 +86,7 @@ export function demoApi(path, data = {}, now = Date.now(), base = location.href,
       const section = store.sections.find(row => row.course_id === course.id);
       let batch = [], collection;
       const sectionSessions = section ? store.sessions.filter(row => row.section_id === section.id).map(row => row.id) : [];
-      for (const name of ['attendance_adjustments', 'attendance', 'enrollments', 'sessions']) {
+      for (const name of ['leave_files', 'leave_reviews', 'leave_requests', 'attendance_adjustments', 'attendance', 'enrollments', 'sessions']) {
         batch = (store[name] || []).filter(row => section ? row.section_id === section.id || sectionSessions.includes(row.session_id) : row.course_id === course.id).slice(0, 50);
         if (batch.length) { collection = name; break; }
       }

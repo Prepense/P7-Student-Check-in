@@ -169,6 +169,17 @@ dialog.wide { width: min(1100px, calc(100% - 30px)); }dialog::backdrop { backgro
 .usb-fallback button { white-space: normal; }
 .usb-fallback p { margin-top: 10px; }
 .qr-heading { flex-wrap: wrap; }
+.leave-tabs { margin: 20px 0; }
+.leave-list { display: grid; gap: 0; margin-top: 24px; }
+.leave-item { padding: 20px 0; border-top: 1px solid var(--line); min-width: 0; }
+.leave-item p, .leave-reason { overflow-wrap: anywhere; white-space: pre-wrap; }
+.leave-item .actions { margin: 12px 0; }
+.check-label { display: flex; align-items: flex-start; gap: 10px; line-height: 1.6; }
+.check-label input { flex: 0 0 20px; width: 20px; height: 20px; margin-top: 6px; }
+.leave-evidence-preview { display: block; width: 100%; max-height: 70vh; object-fit: contain; margin-top: 20px; background: #fff; }
+.leave-paper { display: grid; gap: 12px; padding-top: 20px; margin-top: 20px; border-top: 1px solid var(--line); }
+.leave-student select, .leave-student input[type="file"] { min-width: 0; max-width: 100%; }
+.register-toolbar { flex-wrap: wrap; }
 .qr-countdown strong { width: 68px; }
 .filters select { width: 165px; }
 form footer { flex-wrap: wrap; }
